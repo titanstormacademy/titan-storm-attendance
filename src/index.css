@@ -335,6 +335,28 @@ select {
   border-color: #ffb58d !important;
 }
 
+.student-summary-card {
+  min-height: 190px;
+  background: var(--mantine-color-body);
+}
+
+.student-summary-card.payment-due {
+  background: #fffaf7;
+  border-color: #ffc9aa !important;
+}
+
+.student-report-period .mantine-SegmentedControl-label {
+  padding-inline: 8px;
+}
+
+.student-report-overview {
+  background: #f8fafc;
+}
+
+.student-month-row {
+  background: var(--mantine-color-body);
+}
+
 .stat-value {
   margin: 5px 0 3px;
   font-size: clamp(1.7rem, 3vw, 2.15rem);
@@ -1400,6 +1422,9 @@ select {
 }
 
 [data-mantine-color-scheme='dark'] .student-filter-panel,
+[data-mantine-color-scheme='dark'] .student-summary-card,
+[data-mantine-color-scheme='dark'] .student-report-overview,
+[data-mantine-color-scheme='dark'] .student-month-row,
 [data-mantine-color-scheme='dark'] .attendance-summary-card,
 [data-mantine-color-scheme='dark'] .attendance-tools,
 [data-mantine-color-scheme='dark'] .attendance-date-pills button,

@@ -4,13 +4,13 @@ export interface StudentAttendanceEntry {
   attendance_date: string
   remarks: string
   is_trial: boolean
-  class: { label: string } | null
+  class: { id: number; label: string } | null
 }
 
 export async function getStudentAttendance(studentId: number) {
   const { data, error } = await supabase
     .from('attendance')
-    .select('attendance_date,remarks,is_trial,class:classes(label)')
+    .select('attendance_date,remarks,is_trial,class:classes(id,label)')
     .eq('student_id', studentId)
     .eq('status', 'Present')
     .order('attendance_date', { ascending: false })

@@ -154,6 +154,7 @@ test('basic users can open a read-only student profile from the card', async ({ 
   await navigation.getByText('Students', { exact: true }).click()
   await page.getByRole('button', { name: /Basic Student/ }).click()
   await expect(page.getByRole('dialog')).toBeVisible()
+  await page.getByRole('tab', { name: 'Profile' }).click()
   await expect(page.getByLabel('Full name')).toHaveValue('Basic Student')
   await expect(page.getByLabel('Full name')).toBeDisabled()
   await expect(page.getByRole('button', { name: 'Save student' })).toHaveCount(0)
@@ -165,6 +166,7 @@ test('student profile fits the mobile visual viewport', async ({ page, isMobile 
   const navigation = page.getByRole('navigation', { name: 'Primary navigation' })
   await navigation.getByText('Students', { exact: true }).click()
   await page.getByRole('button', { name: /Basic Student/ }).click()
+  await page.getByRole('tab', { name: 'Profile' }).click()
   const bounds = await page.getByRole('dialog').evaluate((dialog) => {
     const rect = dialog.getBoundingClientRect()
     return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height, viewportWidth: visualViewport?.width || innerWidth, viewportHeight: visualViewport?.height || innerHeight }
@@ -221,6 +223,7 @@ test('administrators can open an editable student profile from the card', async 
   await navigation.getByText('Students', { exact: true }).click()
   await page.getByRole('button', { name: /Birthday Student/ }).click()
   await expect(page.getByRole('dialog')).toBeVisible()
+  await page.getByRole('tab', { name: 'Profile' }).click()
   await expect(page.getByLabel('Full name')).toHaveValue('Birthday Student')
   await expect(page.getByLabel('Full name')).toBeEnabled()
   await expect(page.getByRole('button', { name: 'Save student' })).toBeVisible()

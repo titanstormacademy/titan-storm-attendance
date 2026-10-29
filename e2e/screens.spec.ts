@@ -59,7 +59,15 @@ async function mockAdminBackend(page: Page, options: { failBootstrap?: boolean; 
     if (url.pathname === '/rest/v1/sessions') return respond(route, request.method() === 'GET' ? data.sessions : data.sessions[0])
     if (url.pathname === '/rest/v1/enrollments') return respond(route, data.enrollments)
     if (url.pathname === '/rest/v1/payments') return respond(route, data.payments)
-    if (url.pathname === '/rest/v1/attendance') return options.failReport && url.searchParams.get('select')?.includes('student:students') ? respond(route, { message: 'Report unavailable' }, 500) : respond(route, url.searchParams.get('select')?.includes('student:students') ? data.reportAttendance : data.attendance)
+    if (url.pathname === '/rest/v1/attendance') {
+      if (options.failReport && url.searchParams.get('select')?.includes('student:students')) return respond(route, { message: 'Report unavailable' }, 500)
+      if (url.searchParams.get('select')?.includes('student:students')) return respond(route, data.reportAttendance)
+      if (url.searchParams.get('select')?.includes('class:classes')) {
+        const studentId = Number(url.searchParams.get('student_id')?.replace('eq.', ''))
+        return respond(route, data.attendance.filter((record) => !studentId || record.student_id === studentId).map((record) => ({ ...record, class: { id: record.class_id, label: data.classes.find((item) => item.id === record.class_id)?.label || 'Class' } })))
+      }
+      return respond(route, data.attendance)
+    }
     if (url.pathname === '/rest/v1/coach_attendance') return respond(route, data.coachAttendance)
     if (url.pathname === '/rest/v1/head_coach_rates') return options.failSettings ? respond(route, { message: 'Settings unavailable' }, 500) : respond(route, [{ id: 901, min_students: 1, max_students: 49, min_fee: 0, max_fee: 99999, payout: 30 }])
     if (url.pathname === '/rest/v1/branch_memberships') return respond(route, [])
@@ -134,6 +142,23 @@ test('overview prioritizes monthly pulse, birthdays, and fee collection status',
   await expect(page.locator('.fee-collection-cell').filter({ has: page.getByText('Unpaid', { exact: true }) })).toContainText('0')
   const iconColors = await page.locator('.monthly-pulse-panel .mantine-ThemeIcon-root').evaluateAll((icons) => [...new Set(icons.map((icon) => getComputedStyle(icon).color))])
   expect(iconColors.length).toBeGreaterThanOrEqual(3)
+})
+
+test('student summary shows attendance, payment status, and the simplified payment flow', async ({ page, isMobile }) => {
+  await loginAdmin(page)
+  await navigate(page, Boolean(isMobile), 'Students', 'Students')
+  await page.getByRole('button', { name: /Avery Basketball Student/ }).click()
+  await expect(page.getByRole('tab', { name: 'Summary' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByText('Last attendance')).toBeVisible()
+  await expect(page.getByText('On time')).toBeVisible()
+  await expect(page.getByText('Report summary')).toBeVisible()
+  await expect(page.getByText(/Elite Development Training With Long Name: 1 attended/)).toBeVisible()
+  await expect(page.getByText('Paid', { exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Update payment' }).click()
+  await expect(page.getByRole('dialog', { name: /Record payment/ })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Fee month(s)' })).toBeVisible()
+  await expect(page.getByLabel('Total amount received (RM)')).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Payment method' })).toHaveValue('Bank Transfer')
 })
 
 test('trial attendance is tagged and excluded from counted report sessions', async ({ page, isMobile }) => {
@@ -328,7 +353,7 @@ test('primary interaction on every admin screen is reachable', async ({ page, is
   await navigate(page, Boolean(isMobile), 'Students', 'Students')
   await page.getByRole('button', { name: /Avery Basketball Student/ }).click()
   await expect(page.getByRole('dialog')).toBeVisible()
-  await page.getByRole('button', { name: 'Cancel' }).click()
+  await page.getByRole('button', { name: 'Close' }).click()
 
   await navigate(page, Boolean(isMobile), 'Classes & sessions', 'Classes')
   await page.getByRole('button', { name: 'Add class' }).click()
