@@ -53,7 +53,15 @@ async function mockAdminBackend(page: Page, options: { failBootstrap?: boolean; 
     }
     if (url.pathname === '/rest/v1/branches') return respond(route, [{ id: 1, name: 'Main Academy Branch With A Long Name', subtitle: 'City Sports Centre', status: 'Active' }, { id: 2, name: 'Second Branch', subtitle: 'North Centre', status: 'Active' }])
     if (url.pathname === '/rest/v1/academy_settings') return respond(route, { academy_name: 'Titan Storm Basketball Academy', logo_path: null, default_branch_id: 1 })
-    if (url.pathname === '/rest/v1/students') return options.failBootstrap ? respond(route, { message: 'Bootstrap unavailable' }, 500) : respond(route, admin ? data.students : [])
+    if (url.pathname === '/rest/v1/students') {
+      if (request.method() === 'PATCH') {
+        const studentId = Number(url.searchParams.get('id')?.replace('eq.', ''))
+        const student = data.students.find((item) => item.id === studentId)!
+        Object.assign(student, request.postDataJSON())
+        return respond(route, student)
+      }
+      return options.failBootstrap ? respond(route, { message: 'Bootstrap unavailable' }, 500) : respond(route, admin ? data.students : [])
+    }
     if (url.pathname === '/rest/v1/coaches') return respond(route, data.coaches)
     if (url.pathname === '/rest/v1/classes') return respond(route, data.classes)
     if (url.pathname === '/rest/v1/sessions') return respond(route, request.method() === 'GET' ? data.sessions : data.sessions[0])
@@ -176,6 +184,12 @@ test('payment student rows open the shared student summary without replacing pay
   await expect(page.getByText('1 student', { exact: true })).toBeVisible()
   const mobileCard = page.locator('.payment-student-card').filter({ hasText: 'Avery Basketball Student' })
   const studentSurface = await mobileCard.isVisible() ? mobileCard : page.getByRole('row').filter({ hasText: 'Avery Basketball Student' })
+  const feeInput = studentSurface.getByLabel('Monthly fee for Avery Basketball Student With A Long Name')
+  await feeInput.fill('175')
+  await feeInput.press('Enter')
+  await expect(page.getByText("Avery Basketball Student With A Long Name's monthly fee updated.")).toBeVisible()
+  await expect(feeInput).toHaveValue('175')
+  await expect(page.getByRole('dialog', { name: 'Avery Basketball Student With A Long Name' })).toHaveCount(0)
   await studentSurface.getByText('Avery Basketball Student With A Long Name', { exact: true }).click()
   await expect(page.getByRole('dialog', { name: 'Avery Basketball Student With A Long Name' })).toBeVisible()
   await expect(page.getByRole('tab', { name: 'Summary' })).toHaveAttribute('aria-selected', 'true')
