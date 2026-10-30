@@ -8,8 +8,9 @@ import type {
   Coach,
   CoachAttendance,
   CoachPayment,
-  CoachPayrollEntry,
+  CoachPayrollDate,
   CoachPayrollMonth,
+  CoachPayrollRow,
   CommissionSummary,
   Enrollment,
   HeadCoachRate,
@@ -124,22 +125,33 @@ export async function getPayrollCoaches() {
 
 export async function getCoachPayroll(month: string) {
   const period = unwrap(await supabase.from('coach_payroll_months').select('*').eq('pay_month', `${month}-01`).maybeSingle()) as CoachPayrollMonth | null
-  if (!period) return { period: null, entries: [] as CoachPayrollEntry[] }
-  const entries = (unwrap(await supabase.from('coach_payroll_entries').select('*,coach:coaches(id,name),branch:branches(id,name)').eq('payroll_month_id', period.id).order('work_date').order('id')) || []) as CoachPayrollEntry[]
-  return { period, entries }
+  if (!period) return { period: null, dates: [] as CoachPayrollDate[], rows: [] as CoachPayrollRow[] }
+  const [datesResult, rowsResult] = await Promise.all([
+    supabase.from('coach_payroll_dates').select('*').eq('payroll_month_id', period.id).order('work_date'),
+    supabase.from('coach_payroll_rows').select('*,coach:coaches(id,name),branch:branches(id,name),hours:coach_payroll_hours(hours,date:coach_payroll_dates(work_date))').eq('payroll_month_id', period.id).order('id'),
+  ])
+  if (datesResult.error) throw new Error(datesResult.error.message)
+  if (rowsResult.error) throw new Error(rowsResult.error.message)
+  const rows = (rowsResult.data || []).map((row) => ({
+    ...row,
+    hours: (row.hours || []).map((entry: { hours: number; date: { work_date: string } | null }) => ({ work_date: entry.date?.work_date || '', hours: Number(entry.hours) })).filter((entry: { work_date: string }) => entry.work_date),
+  })) as CoachPayrollRow[]
+  return { period, dates: (datesResult.data || []) as CoachPayrollDate[], rows }
 }
 
 export async function saveCoachPayroll(input: {
   month: string
   customColumn1Label: string
   customColumn2Label: string
-  entries: Array<Pick<CoachPayrollEntry, 'work_date' | 'coach_id' | 'branch_id' | 'hours' | 'hourly_rate' | 'petrol_day_rate' | 'custom_amount_1' | 'custom_amount_2' | 'remarks'> & { id?: number }>
+  dates: string[]
+  rows: Array<Pick<CoachPayrollRow, 'coach_id' | 'branch_id' | 'hourly_rate' | 'petrol_day_rate' | 'custom_amount_1' | 'custom_amount_2' | 'hours'> & { id?: number }>
 }) {
-  return unwrap(await supabase.rpc('save_coach_payroll', {
+  return unwrap(await supabase.rpc('save_coach_payroll_grid', {
     p_pay_month: `${input.month}-01`,
     p_custom_column_1_label: input.customColumn1Label,
     p_custom_column_2_label: input.customColumn2Label,
-    p_entries: input.entries,
+    p_dates: input.dates,
+    p_rows: input.rows,
   })) as number
 }
 

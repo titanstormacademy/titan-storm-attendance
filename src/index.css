@@ -1599,8 +1599,69 @@ select {
 .coach-total-row:last-child { border-bottom: 0; }
 .payroll-mobile-calculation { border-top: 1px solid #e8ebf0; }
 
+.payroll-grid-table .payroll-sticky {
+  position: sticky;
+  z-index: 2;
+  background: white;
+}
+
+.payroll-grid-table thead .payroll-sticky {
+  z-index: 5;
+}
+
+.payroll-grid-table .payroll-sticky.coach { left: 0; min-width: 200px; }
+.payroll-grid-table .payroll-sticky.branch { left: 200px; min-width: 170px; }
+.payroll-grid-table .payroll-sticky.salary-rate { left: 370px; min-width: 125px; }
+.payroll-grid-table .payroll-sticky.petrol-rate { left: 495px; min-width: 125px; box-shadow: 10px 0 18px -18px rgba(16, 27, 51, 0.9); }
+.payroll-grid-table .payroll-sticky.total { right: 44px; min-width: 130px; box-shadow: -10px 0 18px -18px rgba(16, 27, 51, 0.9); }
+.payroll-grid-table .payroll-sticky.actions { right: 0; min-width: 44px; }
+.payroll-date-group { color: #d4531f !important; background: #fff8f3; }
+
+.payroll-mobile-card {
+  overflow: hidden;
+}
+
+.payroll-mobile-card-header {
+  display: flex;
+  width: 100%;
+  min-height: 72px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.payroll-mobile-card-header svg {
+  transition: transform 0.2s ease;
+}
+
+.payroll-mobile-card-header svg.open {
+  transform: rotate(180deg);
+}
+
+.payroll-mobile-save {
+  position: fixed;
+  z-index: 210;
+  right: 12px;
+  bottom: calc(76px + env(safe-area-inset-bottom));
+  left: 12px;
+  padding: 12px 14px;
+  border: 1px solid #e5e8ee;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 18px 40px -18px rgba(16, 27, 51, 0.72);
+}
+
 [data-mantine-color-scheme='dark'] .payroll-command-bar,
-[data-mantine-color-scheme='dark'] .coach-total-list { background: #131d2e; border-color: #2b3950; }
+[data-mantine-color-scheme='dark'] .coach-total-list,
+[data-mantine-color-scheme='dark'] .payroll-mobile-save,
+[data-mantine-color-scheme='dark'] .payroll-grid-table .payroll-sticky { background: #131d2e; border-color: #2b3950; }
+[data-mantine-color-scheme='dark'] .payroll-date-group { color: #ffb58d !important; background: #332116; }
 [data-mantine-color-scheme='dark'] .payroll-table tbody tr:hover { background: #332116; }
 [data-mantine-color-scheme='dark'] .payroll-table tfoot th { color: #edf2f8; border-color: #34445e; }
 [data-mantine-color-scheme='dark'] .payroll-calculated-cell { color: #c2ccda; }

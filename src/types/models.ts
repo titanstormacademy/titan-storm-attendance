@@ -141,20 +141,22 @@ export interface CoachPayrollMonth {
   custom_column_2_label: string
 }
 
-export interface CoachPayrollEntry {
+export interface CoachPayrollDate {
   id: number
   payroll_month_id: number
   work_date: string
+}
+
+export interface CoachPayrollRow {
+  id: number
+  payroll_month_id: number
   coach_id: number
   branch_id: number
-  hours: number
   hourly_rate: number
   petrol_day_rate: number
   custom_amount_1: number
   custom_amount_2: number
-  salary_amount: number
-  total_amount: number
-  remarks: string
+  hours: Array<{ work_date: string; hours: number }>
   coach?: Pick<Coach, 'id' | 'name'>
   branch?: Pick<Branch, 'id' | 'name'>
 }
