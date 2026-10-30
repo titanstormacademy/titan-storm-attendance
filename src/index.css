@@ -1609,13 +1609,15 @@ select {
   z-index: 5;
 }
 
-.payroll-grid-table .payroll-sticky.coach { left: 0; min-width: 200px; }
-.payroll-grid-table .payroll-sticky.branch { left: 200px; min-width: 170px; }
-.payroll-grid-table .payroll-sticky.salary-rate { left: 370px; min-width: 125px; }
-.payroll-grid-table .payroll-sticky.petrol-rate { left: 495px; min-width: 125px; box-shadow: 10px 0 18px -18px rgba(16, 27, 51, 0.9); }
+.payroll-grid-table .payroll-sticky.coach { left: 0; min-width: 190px; box-shadow: 10px 0 18px -18px rgba(16, 27, 51, 0.9); }
+.payroll-grid-table .payroll-col-branch { min-width: 155px; }
+.payroll-grid-table .payroll-col-rate { min-width: 115px; }
 .payroll-grid-table .payroll-sticky.total { right: 44px; min-width: 130px; box-shadow: -10px 0 18px -18px rgba(16, 27, 51, 0.9); }
 .payroll-grid-table .payroll-sticky.actions { right: 0; min-width: 44px; }
+.payroll-grid-table thead tr:nth-child(2) th { min-width: 82px; text-align: center; }
 .payroll-date-group { color: #d4531f !important; background: #fff8f3; }
+.payroll-custom-heading { min-width: 132px; padding: 6px !important; }
+.payroll-custom-heading .mantine-Input-input { min-width: 120px; height: 36px; padding: 0 9px; color: #475467; font-size: 0.72rem; font-weight: 800; text-transform: uppercase; }
 
 .payroll-mobile-card {
   overflow: hidden;
