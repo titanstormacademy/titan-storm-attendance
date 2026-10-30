@@ -1599,6 +1599,37 @@ select {
 .coach-total-row:last-child { border-bottom: 0; }
 .payroll-mobile-calculation { border-top: 1px solid #e8ebf0; }
 
+.payroll-desktop-scroll {
+  width: 100%;
+  overflow-x: scroll;
+  overflow-y: hidden;
+  padding-bottom: 10px;
+  scrollbar-color: #f26522 #e8ebf0;
+  scrollbar-gutter: stable;
+  scrollbar-width: auto;
+  overscroll-behavior-x: contain;
+}
+
+.payroll-desktop-scroll:focus-visible {
+  outline: 3px solid rgba(242, 101, 34, 0.24);
+  outline-offset: 3px;
+}
+
+.payroll-desktop-scroll::-webkit-scrollbar {
+  height: 12px;
+}
+
+.payroll-desktop-scroll::-webkit-scrollbar-track {
+  background: #e8ebf0;
+  border-radius: 999px;
+}
+
+.payroll-desktop-scroll::-webkit-scrollbar-thumb {
+  background: #f26522;
+  border: 3px solid #e8ebf0;
+  border-radius: 999px;
+}
+
 .payroll-grid-table .payroll-sticky {
   position: sticky;
   z-index: 2;
