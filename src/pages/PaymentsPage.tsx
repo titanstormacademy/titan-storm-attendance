@@ -3,7 +3,7 @@ import dayjs from 'dayjs'
 import { Alert, Badge, Box, Button, FileInput, Grid, Group, Modal, MultiSelect, NumberInput, Paper, SegmentedControl, Select, SimpleGrid, Stack, Table, Text, TextInput, Textarea } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
-import { IconAlertCircle, IconCash, IconCheck, IconEdit, IconEye, IconHistory, IconPlus, IconReceipt, IconRobot, IconTrash } from '@tabler/icons-react'
+import { IconAlertCircle, IconCash, IconCheck, IconEdit, IconEye, IconHistory, IconPlus, IconReceipt, IconRobot, IconSearch, IconTrash } from '@tabler/icons-react'
 import { recordStudentPayment, removeReceiptIfUnreferenced, removeUploadedImage, scanReceipt, uploadImage } from '../lib/api'
 import { deletePayment, findDuplicateReference, openReceipt, updatePayment } from '../lib/paymentOperations'
 import { PageHeader, PersonAvatar, StatCard } from '../components/ui'
@@ -19,6 +19,7 @@ export function PaymentsPage({ branchId, data, onChanged }: { branchId: number; 
   const [formOpened, formModal] = useDisclosure(false)
   const [historyOpened, historyModal] = useDisclosure(false)
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null)
+  const [studentSearch, setStudentSearch] = useState('')
   const [detailStudent, setDetailStudent] = useState<Student | null>(null)
   const [detailRequest, setDetailRequest] = useState(0)
   const [paymentId, setPaymentId] = useState<number | null>(null)
@@ -50,6 +51,8 @@ export function PaymentsPage({ branchId, data, onChanged }: { branchId: number; 
   const collected = periodPayments.filter((payment) => payment.status !== 'Unpaid').reduce((sum, payment) => sum + Number(payment.amount), 0)
   const enrolledIds = new Set(data.enrollments.filter((item) => !item.end_date).map((item) => item.student_id))
   const activeEnrolled = data.students.filter((student) => student.status === 'Active' && enrolledIds.has(student.id))
+  const searchNeedle = studentSearch.trim().toLowerCase()
+  const visibleStudents = activeEnrolled.filter((student) => !searchNeedle || student.name.toLowerCase().includes(searchNeedle))
   const paidIds = new Set(activeEnrolled.filter((student) => isStudentSettledForPeriod(data, student, periodMode, period, year)).map((student) => student.id))
   const arrears = useMemo(() => calculateArrears(data), [data])
   const outstandingStudents = activeEnrolled.filter((student) => (arrears.get(student.id)?.months.length || 0) > 0)
@@ -183,9 +186,10 @@ export function PaymentsPage({ branchId, data, onChanged }: { branchId: number; 
       </SimpleGrid>
 
       <Paper radius="lg" withBorder>
-        <Group justify="space-between" p="lg"><Box><Text fw={800} size="lg">Student collection status</Text><Text c="dimmed" size="sm">Open a student to review or correct every payment.</Text></Box><Badge variant="light" size="lg">{periodMode === 'month' ? dayjs(`${period}-01`).format('MMM YYYY') : year}</Badge></Group>
-        <Stack hiddenFrom="md" p="md" gap="sm">{activeEnrolled.map((student) => <PaymentCard key={student.id} student={student} payments={periodPayments.filter((payment) => payment.student_id === student.id)} arrears={arrears.get(student.id)} onOpen={() => showStudent(student)} onHistory={() => showHistory(student)} onAdd={() => openNew(student)} />)}</Stack>
-        <Box visibleFrom="md"><Table.ScrollContainer minWidth={820}><Table verticalSpacing="sm" horizontalSpacing="lg" highlightOnHover><Table.Thead><Table.Tr><Table.Th>Student</Table.Th><Table.Th>Monthly fee</Table.Th><Table.Th>Status</Table.Th><Table.Th>Received</Table.Th><Table.Th>Method / reference</Table.Th><Table.Th>Outstanding</Table.Th><Table.Th /></Table.Tr></Table.Thead><Table.Tbody>{activeEnrolled.map((student) => {
+        <Box p="lg"><Group justify="space-between"><Box><Text fw={800} size="lg">Student collection status</Text><Text c="dimmed" size="sm">Open a student to review or correct every payment.</Text></Box><Badge variant="light" size="lg">{periodMode === 'month' ? dayjs(`${period}-01`).format('MMM YYYY') : year}</Badge></Group><TextInput mt="md" aria-label="Search payment students by name" leftSection={<IconSearch size={17} />} placeholder="Search student name…" value={studentSearch} onChange={(event) => setStudentSearch(event.currentTarget.value)} /><Text size="xs" c="dimmed" mt={6}>{visibleStudents.length === activeEnrolled.length ? `${activeEnrolled.length} student${activeEnrolled.length === 1 ? '' : 's'}` : `${visibleStudents.length} of ${activeEnrolled.length} students`}</Text></Box>
+        {!visibleStudents.length && <Text c="dimmed" ta="center" py="xl">No students match this name.</Text>}
+        <Stack hiddenFrom="md" p="md" gap="sm">{visibleStudents.map((student) => <PaymentCard key={student.id} student={student} payments={periodPayments.filter((payment) => payment.student_id === student.id)} arrears={arrears.get(student.id)} onOpen={() => showStudent(student)} onHistory={() => showHistory(student)} onAdd={() => openNew(student)} />)}</Stack>
+        <Box visibleFrom="md"><Table.ScrollContainer minWidth={820}><Table verticalSpacing="sm" horizontalSpacing="lg" highlightOnHover><Table.Thead><Table.Tr><Table.Th>Student</Table.Th><Table.Th>Monthly fee</Table.Th><Table.Th>Status</Table.Th><Table.Th>Received</Table.Th><Table.Th>Method / reference</Table.Th><Table.Th>Outstanding</Table.Th><Table.Th /></Table.Tr></Table.Thead><Table.Tbody>{visibleStudents.map((student) => {
           const rows = periodPayments.filter((payment) => payment.student_id === student.id); const best = bestPayment(rows); const total = rows.filter((payment) => payment.status !== 'Unpaid').reduce((sum, payment) => sum + Number(payment.amount), 0); const due = arrears.get(student.id)
           return <Table.Tr key={student.id} className="payment-student-row" tabIndex={0} onClick={() => showStudent(student)} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); showStudent(student) } }}><Table.Td><Group wrap="nowrap"><PersonAvatar name={student.name} src={publicImageUrl('student-photos', student.photo_path)} size={42} /><Box><Text fw={700}>{student.name}</Text><Text size="xs" c="dimmed">{student.student_phone || student.parent_contact || 'No phone'}</Text></Box></Group></Table.Td><Table.Td>RM {money(student.monthly_fee || 0)}</Table.Td><Table.Td><StatusBadge status={best?.status} /></Table.Td><Table.Td><Text fw={650}>RM {money(total)}</Text><Text size="xs" c="dimmed">{best?.date_received ? dayjs(best.date_received).format('D MMM YYYY') : '—'}</Text></Table.Td><Table.Td><Text size="sm">{best?.method || '—'}</Text><Text size="xs" c="dimmed">{best?.reference_no || 'No reference'}</Text></Table.Td><Table.Td><Text fw={650}>{due?.months.length || 0} months</Text><Text size="xs" c="dimmed">RM {money(due?.amount || 0)}</Text></Table.Td><Table.Td><Group gap="xs" wrap="nowrap"><Button variant="subtle" size="xs" onClick={(event) => { event.stopPropagation(); showHistory(student) }}>History</Button><Button variant="light" size="xs" onClick={(event) => { event.stopPropagation(); openNew(student) }}>Add</Button></Group></Table.Td></Table.Tr>
         })}</Table.Tbody></Table></Table.ScrollContainer></Box>

@@ -166,6 +166,11 @@ test('student summary shows attendance, payment status, and the simplified payme
 test('payment student rows open the shared student summary without replacing payment actions', async ({ page, isMobile }) => {
   await loginAdmin(page)
   await navigate(page, Boolean(isMobile), 'Payments', 'Payments')
+  const search = page.getByLabel('Search payment students by name')
+  await search.fill('blake')
+  await expect(page.getByText('No students match this name.')).toBeVisible()
+  await search.fill('avery')
+  await expect(page.getByText('1 student', { exact: true })).toBeVisible()
   const mobileCard = page.locator('.payment-student-card').filter({ hasText: 'Avery Basketball Student' })
   const studentSurface = await mobileCard.isVisible() ? mobileCard : page.getByRole('row').filter({ hasText: 'Avery Basketball Student' })
   await studentSurface.getByText('Avery Basketball Student With A Long Name', { exact: true }).click()
