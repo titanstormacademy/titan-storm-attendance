@@ -152,6 +152,8 @@ test('student summary shows attendance, payment status, and the simplified payme
   await expect(page.getByText('Last attendance')).toBeVisible()
   await expect(page.getByText('On time')).toBeVisible()
   await expect(page.getByText('Report summary')).toBeVisible()
+  await expect(page.getByText('1 / 4')).toBeVisible()
+  await expect(page.getByText('attended · 3 sessions below target')).toBeVisible()
   await expect(page.getByText(/Elite Development Training With Long Name: 1 attended/)).toBeVisible()
   await expect(page.getByText('Paid', { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Update payment' }).click()
@@ -159,6 +161,20 @@ test('student summary shows attendance, payment status, and the simplified payme
   await expect(page.getByRole('textbox', { name: 'Fee month(s)' })).toBeVisible()
   await expect(page.getByLabel('Total amount received (RM)')).toBeVisible()
   await expect(page.getByRole('textbox', { name: 'Payment method' })).toHaveValue('Bank Transfer')
+})
+
+test('payment student rows open the shared student summary without replacing payment actions', async ({ page, isMobile }) => {
+  await loginAdmin(page)
+  await navigate(page, Boolean(isMobile), 'Payments', 'Payments')
+  const mobileCard = page.locator('.payment-student-card').filter({ hasText: 'Avery Basketball Student' })
+  const studentSurface = await mobileCard.isVisible() ? mobileCard : page.getByRole('row').filter({ hasText: 'Avery Basketball Student' })
+  await studentSurface.getByText('Avery Basketball Student With A Long Name', { exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'Avery Basketball Student With A Long Name' })).toBeVisible()
+  await expect(page.getByRole('tab', { name: 'Summary' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByText('1 / 4')).toBeVisible()
+  await page.getByRole('button', { name: 'Close' }).click()
+  await studentSurface.getByRole('button', { name: 'History' }).click()
+  await expect(page.getByRole('dialog', { name: /payment history/ })).toBeVisible()
 })
 
 test('trial attendance is tagged and excluded from counted report sessions', async ({ page, isMobile }) => {

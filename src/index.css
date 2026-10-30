@@ -357,6 +357,17 @@ select {
   background: var(--mantine-color-body);
 }
 
+.payment-student-row,
+.payment-student-card {
+  cursor: pointer;
+}
+
+.payment-student-row:focus-visible,
+.payment-student-card:focus-visible {
+  outline: 3px solid rgba(242, 101, 34, 0.35);
+  outline-offset: -3px;
+}
+
 .stat-value {
   margin: 5px 0 3px;
   font-size: clamp(1.7rem, 3vw, 2.15rem);

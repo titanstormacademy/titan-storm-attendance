@@ -17,7 +17,7 @@ const blankStudent: Partial<Student> & { name: string } = {
 const paymentMethods: PaymentMethod[] = ['Cash', 'Bank Transfer', "Touch 'n Go eWallet", 'Online', 'Others']
 type ReportPreset = 'month' | '3months' | '6months' | 'year'
 
-export function StudentsPage({ branchId, data, isAdmin, createRequest, onCreateHandled, onChanged }: { branchId: number; data: BootstrapData; isAdmin: boolean; createRequest: number; onCreateHandled: () => void; onChanged: () => Promise<unknown> }) {
+export function StudentsPage({ branchId, data, isAdmin, createRequest = 0, onCreateHandled = () => undefined, onChanged, dialogOnly = false, dialogStudent = null, dialogRequest = 0, onDialogClose }: { branchId: number; data: BootstrapData; isAdmin: boolean; createRequest?: number; onCreateHandled?: () => void; onChanged: () => Promise<unknown>; dialogOnly?: boolean; dialogStudent?: Student | null; dialogRequest?: number; onDialogClose?: () => void }) {
   const [opened, { open, close }] = useDisclosure(false)
   const [paymentOpened, paymentModal] = useDisclosure(false)
   const [search, setSearch] = useState('')
@@ -46,6 +46,7 @@ export function StudentsPage({ branchId, data, isAdmin, createRequest, onCreateH
   const [baseline, setBaseline] = useState('')
   const handledCreateRequest = useRef(0)
   const profileRequest = useRef(0)
+  const lastDialogRequest = useRef(0)
   const submitLock = useRef(false)
   const currentSnapshot = studentSnapshot(form, classIds, enrollmentDates, withdrawalDates)
   const dirty = opened && (Boolean(photo) || currentSnapshot !== baseline)
@@ -125,10 +126,43 @@ export function StudentsPage({ branchId, data, isAdmin, createRequest, onCreateH
     }
   }
 
-  function guardedClose() {
-    if (!confirmDiscard({ dirty, pending: saving })) return
+  useEffect(() => {
+    if (!dialogOnly || !dialogStudent || dialogRequest <= lastDialogRequest.current) return
+    lastDialogRequest.current = dialogRequest
+    const requestId = ++profileRequest.current
+    const nextForm = { ...dialogStudent, age: dialogStudent.age ?? null }
+    const enrollments = data.enrollments.filter((item) => item.student_id === dialogStudent.id && !item.end_date)
+    const nextClassIds = enrollments.map((item) => String(item.class_id))
+    const nextDates = Object.fromEntries(enrollments.map((item) => [String(item.class_id), item.start_date]))
+    setForm(nextForm)
+    setAgeMode(dialogStudent.date_of_birth ? 'dob' : 'manual')
+    setClassIds(nextClassIds)
+    setEnrollmentDates(nextDates)
+    setWithdrawalDates({})
+    setAttendance([])
+    setAttendanceError('')
+    setAttendanceLoading(true)
+    setActiveTab('summary')
+    setReportPreset('month')
+    setPhoto(null)
+    setPhotoPreviewUrl(null)
+    setBaseline(studentSnapshot(nextForm, nextClassIds, nextDates, {}))
+    open()
+    getStudentAttendance(dialogStudent.id)
+      .then((nextAttendance) => { if (requestId === profileRequest.current) setAttendance(nextAttendance) })
+      .catch((error) => { if (requestId === profileRequest.current) { const message = errorMessage(error); setAttendanceError(message); notifications.show({ color: 'red', message }) } })
+      .finally(() => { if (requestId === profileRequest.current) setAttendanceLoading(false) })
+  }, [data.enrollments, dialogOnly, dialogRequest, dialogStudent, open])
+
+  function finishClose() {
     profileRequest.current += 1
     close()
+    onDialogClose?.()
+  }
+
+  function guardedClose() {
+    if (!confirmDiscard({ dirty, pending: saving })) return
+    finishClose()
   }
 
   function changeAgeMode(value: string) {
@@ -199,6 +233,7 @@ export function StudentsPage({ branchId, data, isAdmin, createRequest, onCreateH
         setBaseline(studentSnapshot(saved, classIds, enrollmentDates, {}))
         setPhoto(null)
         close()
+        onDialogClose?.()
       }
       try { await onChanged() } catch (error) { notifications.show({ color: 'orange', title: 'Student saved, refresh failed', message: errorMessage(error) }) }
     } catch (error) {
@@ -218,6 +253,7 @@ export function StudentsPage({ branchId, data, isAdmin, createRequest, onCreateH
       await Promise.all(receiptPaths.map((path) => removeReceiptIfUnreferenced(path).catch(() => undefined)))
       notifications.show({ color: 'green', message: 'Student deleted' })
       close()
+      onDialogClose?.()
       await onChanged()
     } catch (error) {
       notifications.show({ color: 'red', message: errorMessage(error) })
@@ -232,6 +268,8 @@ export function StudentsPage({ branchId, data, isAdmin, createRequest, onCreateH
   const period = reportPeriod(reportPreset)
   const reportMonths = monthsBetween(period.start, period.end)
   const reportAttendance = attendance.filter((entry) => entry.attendance_date >= period.start.format('YYYY-MM-DD') && entry.attendance_date <= period.end.format('YYYY-MM-DD'))
+  const reportTarget = attendanceTarget(reportMonths, studentEnrollments)
+  const reportRemaining = Math.max(0, reportTarget - reportAttendance.length)
   const eligibleReportMonths = reportMonths.filter((month) => isEnrolledInMonth(studentEnrollments, month))
   const paidReportMonths = eligibleReportMonths.filter((month) => paymentStatusForMonth(studentPayments, month.format('YYYY-MM')) === 'Paid').length
   const photoUrl = photoPreviewUrl || (form.photo_path ? publicImageUrl('student-photos', form.photo_path) : null)
@@ -270,6 +308,7 @@ export function StudentsPage({ branchId, data, isAdmin, createRequest, onCreateH
   }
 
   return <>
+    {!dialogOnly && <>
     <PageHeader title="Students" description="Search, review, and manage student profiles" />
     <Paper className="student-filter-panel" p="md" radius="lg" withBorder mb="sm">
       <Stack gap="sm">
@@ -287,6 +326,7 @@ export function StudentsPage({ branchId, data, isAdmin, createRequest, onCreateH
     })}</Box> : <EmptyState title="No students found" message="Try changing the filters or add your first student." icon={status === 'Inactive' ? IconUserOff : IconUsers} />}
 
     {isAdmin && <ActionIcon className="student-fab" aria-label="Add student" size={58} radius="xl" color="orange" onClick={() => showProfile()}><IconPlus size={26} /></ActionIcon>}
+    </>}
 
     <ResponsiveModal classNames={{ inner: 'student-profile-modal-inner', content: 'student-profile-modal-content', body: 'student-profile-modal-body' }} transitionProps={{ transition: 'fade', duration: 0 }} opened={opened} onClose={guardedClose} title={form.id ? form.name : 'Add student'} size="lg" centered closeOnClickOutside={!saving} closeOnEscape={!saving}>
       <Stack>
@@ -306,7 +346,7 @@ export function StudentsPage({ branchId, data, isAdmin, createRequest, onCreateH
               <Paper className="student-summary-card" p="lg" radius="lg" withBorder><Group justify="space-between" mb="md"><Text fw={800}>Last attendance</Text><IconCalendarCheck size={20} color="#2f9e44" /></Group>{attendanceLoading ? <Text c="dimmed" size="sm">Loading attendance…</Text> : attendance[0] ? <><Text fw={850} size="xl">{dayjs(attendance[0].attendance_date).format('D MMM YYYY')}</Text><Text size="sm" c="dimmed" mt={3}>{attendance[0].class?.label || 'Class'} · {relativeDate(attendance[0].attendance_date)}</Text>{attendance[0].remarks && <Text size="sm" mt="md">{attendance[0].remarks}</Text>}</> : <Text c="dimmed" size="sm">No attendance has been recorded.</Text>}</Paper>
               {isAdmin && <Paper className={`student-summary-card ${due.months.length ? 'payment-due' : ''}`} p="lg" radius="lg" withBorder><Group justify="space-between" mb="md"><Text fw={800}>Payment due</Text><IconCash size={20} color={due.months.length ? '#e8590c' : '#2f9e44'} /></Group>{studentEnrollments.length ? <><Text fw={850} size="xl">RM {money(due.amount)}</Text><Text size="sm" c="dimmed" mt={3}>{due.months.length ? `${due.months.length} unpaid month${due.months.length === 1 ? '' : 's'} · oldest ${dayjs(`${due.months[0]}-01`).format('MMM YYYY')}` : 'No outstanding fee months'}</Text></> : <Text c="dimmed" size="sm">Add a class enrollment to calculate payment due.</Text>}<Button mt="md" variant={due.months.length ? 'filled' : 'light'} leftSection={<IconPlus size={16} />} onClick={openPayment}>{due.months.length ? 'Update payment' : 'Record payment'}</Button></Paper>}
             </SimpleGrid>
-            <Box><Group justify="space-between" align="flex-end" mb="sm"><Box><Text fw={850} size="lg">Report summary</Text><Text size="sm" c="dimmed">Attendance{isAdmin ? ' and fee status' : ''} for {period.label.toLowerCase()}.</Text></Box></Group><SegmentedControl className="student-report-period" fullWidth value={reportPreset} onChange={(value) => setReportPreset(value as ReportPreset)} data={[{ value: 'month', label: 'This month' }, { value: '3months', label: '3 months' }, { value: '6months', label: '6 months' }, { value: 'year', label: 'This year' }]} /><Paper className="student-report-overview" p="lg" radius="lg" withBorder mt="sm"><SimpleGrid cols={isAdmin ? 2 : 1}><Box><Text size="xs" c="dimmed" fw={700}>ATTENDANCE</Text><Text fw={850} size="xl">{reportAttendance.length}</Text><Text size="xs" c="dimmed">sessions attended</Text></Box>{isAdmin && <Box><Text size="xs" c="dimmed" fw={700}>PAYMENT STATUS</Text><Text fw={850} size="xl">{paidReportMonths}/{eligibleReportMonths.length}</Text><Text size="xs" c="dimmed">eligible months paid</Text></Box>}</SimpleGrid></Paper><Stack gap="xs" mt="sm">{[...reportMonths].reverse().map((month) => <MonthlyReportRow key={month.format('YYYY-MM')} month={month} attendance={attendance} payments={studentPayments} enrollments={studentEnrollments} classes={data.classes} showPayments={isAdmin} />)}</Stack></Box>
+            <Box><Group justify="space-between" align="flex-end" mb="sm"><Box><Text fw={850} size="lg">Report summary</Text><Text size="sm" c="dimmed">Attendance{isAdmin ? ' and fee status' : ''} for {period.label.toLowerCase()}.</Text></Box></Group><SegmentedControl className="student-report-period" fullWidth value={reportPreset} onChange={(value) => setReportPreset(value as ReportPreset)} data={[{ value: 'month', label: 'This month' }, { value: '3months', label: '3 months' }, { value: '6months', label: '6 months' }, { value: 'year', label: 'This year' }]} /><Paper className="student-report-overview" p="lg" radius="lg" withBorder mt="sm"><SimpleGrid cols={isAdmin ? 2 : 1}><Box><Text size="xs" c="dimmed" fw={700}>ATTENDANCE</Text><Text fw={850} size="xl">{reportAttendance.length} / {reportTarget}</Text><Text size="xs" c="dimmed">attended · {reportRemaining} session{reportRemaining === 1 ? '' : 's'} below target</Text></Box>{isAdmin && <Box><Text size="xs" c="dimmed" fw={700}>PAYMENT STATUS</Text><Text fw={850} size="xl">{paidReportMonths}/{eligibleReportMonths.length}</Text><Text size="xs" c="dimmed">eligible months paid</Text></Box>}</SimpleGrid></Paper><Stack gap="xs" mt="sm">{[...reportMonths].reverse().map((month) => <MonthlyReportRow key={month.format('YYYY-MM')} month={month} attendance={attendance} payments={studentPayments} enrollments={studentEnrollments} classes={data.classes} showPayments={isAdmin} />)}</Stack></Box>
           </Stack></Tabs.Panel>}
           <Tabs.Panel value="profile" pt="md"><Grid gutter="sm" className="student-profile-form">
             <Grid.Col span={{ base: 12, xs: 8 }}><TextInput label="Full name" value={form.name} disabled={!isAdmin} onChange={(event) => setForm({ ...form, name: event.currentTarget.value })} required /></Grid.Col>
@@ -429,6 +469,10 @@ function enrollmentCoversMonth(enrollment: BootstrapData['enrollments'][number],
 
 function isEnrolledInMonth(enrollments: BootstrapData['enrollments'], month: dayjs.Dayjs) {
   return enrollments.some((enrollment) => enrollmentCoversMonth(enrollment, month))
+}
+
+function attendanceTarget(months: dayjs.Dayjs[], enrollments: BootstrapData['enrollments']) {
+  return months.reduce((total, month) => total + new Set(enrollments.filter((enrollment) => enrollmentCoversMonth(enrollment, month)).map((enrollment) => enrollment.class_id)).size * 4, 0)
 }
 
 function defaultCoach(studentId: number, data: BootstrapData) {

@@ -7,6 +7,7 @@ import { IconAlertCircle, IconCash, IconCheck, IconEdit, IconEye, IconHistory, I
 import { recordStudentPayment, removeReceiptIfUnreferenced, removeUploadedImage, scanReceipt, uploadImage } from '../lib/api'
 import { deletePayment, findDuplicateReference, openReceipt, updatePayment } from '../lib/paymentOperations'
 import { PageHeader, PersonAvatar, StatCard } from '../components/ui'
+import { StudentsPage } from './StudentsPage'
 import { publicImageUrl } from '../lib/supabase'
 import { useNavigationGuard } from '../contexts/useNavigationGuard'
 import type { BootstrapData, Payment, PaymentMethod, PaymentStatus, Student } from '../types/models'
@@ -18,6 +19,8 @@ export function PaymentsPage({ branchId, data, onChanged }: { branchId: number; 
   const [formOpened, formModal] = useDisclosure(false)
   const [historyOpened, historyModal] = useDisclosure(false)
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null)
+  const [detailStudent, setDetailStudent] = useState<Student | null>(null)
+  const [detailRequest, setDetailRequest] = useState(0)
   const [paymentId, setPaymentId] = useState<number | null>(null)
   const [studentId, setStudentId] = useState<string | null>(null)
   const [feeMonths, setFeeMonths] = useState<string[]>([dayjs().format('YYYY-MM')])
@@ -92,6 +95,11 @@ export function PaymentsPage({ branchId, data, onChanged }: { branchId: number; 
   function showHistory(student: Student) {
     setSelectedStudent(student)
     historyModal.open()
+  }
+
+  function showStudent(student: Student) {
+    setDetailStudent(student)
+    setDetailRequest((current) => current + 1)
   }
 
   async function handleReceipt(file: File | null) {
@@ -176,10 +184,10 @@ export function PaymentsPage({ branchId, data, onChanged }: { branchId: number; 
 
       <Paper radius="lg" withBorder>
         <Group justify="space-between" p="lg"><Box><Text fw={800} size="lg">Student collection status</Text><Text c="dimmed" size="sm">Open a student to review or correct every payment.</Text></Box><Badge variant="light" size="lg">{periodMode === 'month' ? dayjs(`${period}-01`).format('MMM YYYY') : year}</Badge></Group>
-        <Stack hiddenFrom="md" p="md" gap="sm">{activeEnrolled.map((student) => <PaymentCard key={student.id} student={student} payments={periodPayments.filter((payment) => payment.student_id === student.id)} arrears={arrears.get(student.id)} onHistory={() => showHistory(student)} onAdd={() => openNew(student)} />)}</Stack>
+        <Stack hiddenFrom="md" p="md" gap="sm">{activeEnrolled.map((student) => <PaymentCard key={student.id} student={student} payments={periodPayments.filter((payment) => payment.student_id === student.id)} arrears={arrears.get(student.id)} onOpen={() => showStudent(student)} onHistory={() => showHistory(student)} onAdd={() => openNew(student)} />)}</Stack>
         <Box visibleFrom="md"><Table.ScrollContainer minWidth={820}><Table verticalSpacing="sm" horizontalSpacing="lg" highlightOnHover><Table.Thead><Table.Tr><Table.Th>Student</Table.Th><Table.Th>Monthly fee</Table.Th><Table.Th>Status</Table.Th><Table.Th>Received</Table.Th><Table.Th>Method / reference</Table.Th><Table.Th>Outstanding</Table.Th><Table.Th /></Table.Tr></Table.Thead><Table.Tbody>{activeEnrolled.map((student) => {
           const rows = periodPayments.filter((payment) => payment.student_id === student.id); const best = bestPayment(rows); const total = rows.filter((payment) => payment.status !== 'Unpaid').reduce((sum, payment) => sum + Number(payment.amount), 0); const due = arrears.get(student.id)
-          return <Table.Tr key={student.id}><Table.Td><Group wrap="nowrap"><PersonAvatar name={student.name} src={publicImageUrl('student-photos', student.photo_path)} size={42} /><Box><Text fw={700}>{student.name}</Text><Text size="xs" c="dimmed">{student.student_phone || student.parent_contact || 'No phone'}</Text></Box></Group></Table.Td><Table.Td>RM {money(student.monthly_fee || 0)}</Table.Td><Table.Td><StatusBadge status={best?.status} /></Table.Td><Table.Td><Text fw={650}>RM {money(total)}</Text><Text size="xs" c="dimmed">{best?.date_received ? dayjs(best.date_received).format('D MMM YYYY') : '—'}</Text></Table.Td><Table.Td><Text size="sm">{best?.method || '—'}</Text><Text size="xs" c="dimmed">{best?.reference_no || 'No reference'}</Text></Table.Td><Table.Td><Text fw={650}>{due?.months.length || 0} months</Text><Text size="xs" c="dimmed">RM {money(due?.amount || 0)}</Text></Table.Td><Table.Td><Group gap="xs" wrap="nowrap"><Button variant="subtle" size="xs" onClick={() => showHistory(student)}>History</Button><Button variant="light" size="xs" onClick={() => openNew(student)}>Add</Button></Group></Table.Td></Table.Tr>
+          return <Table.Tr key={student.id} className="payment-student-row" tabIndex={0} onClick={() => showStudent(student)} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); showStudent(student) } }}><Table.Td><Group wrap="nowrap"><PersonAvatar name={student.name} src={publicImageUrl('student-photos', student.photo_path)} size={42} /><Box><Text fw={700}>{student.name}</Text><Text size="xs" c="dimmed">{student.student_phone || student.parent_contact || 'No phone'}</Text></Box></Group></Table.Td><Table.Td>RM {money(student.monthly_fee || 0)}</Table.Td><Table.Td><StatusBadge status={best?.status} /></Table.Td><Table.Td><Text fw={650}>RM {money(total)}</Text><Text size="xs" c="dimmed">{best?.date_received ? dayjs(best.date_received).format('D MMM YYYY') : '—'}</Text></Table.Td><Table.Td><Text size="sm">{best?.method || '—'}</Text><Text size="xs" c="dimmed">{best?.reference_no || 'No reference'}</Text></Table.Td><Table.Td><Text fw={650}>{due?.months.length || 0} months</Text><Text size="xs" c="dimmed">RM {money(due?.amount || 0)}</Text></Table.Td><Table.Td><Group gap="xs" wrap="nowrap"><Button variant="subtle" size="xs" onClick={(event) => { event.stopPropagation(); showHistory(student) }}>History</Button><Button variant="light" size="xs" onClick={(event) => { event.stopPropagation(); openNew(student) }}>Add</Button></Group></Table.Td></Table.Tr>
         })}</Table.Tbody></Table></Table.ScrollContainer></Box>
       </Paper>
 
@@ -204,13 +212,14 @@ export function PaymentsPage({ branchId, data, onChanged }: { branchId: number; 
           <Group className="modal-actions" justify="flex-end"><Button variant="default" disabled={saving} onClick={closeForm}>Cancel</Button><Button onClick={submit} loading={saving} disabled={!studentId || !feeMonths.length || amount === '' || Boolean(paymentValidation)}>Save payment</Button></Group>
         </Stack>
       </Modal>
+      <StudentsPage branchId={branchId} data={data} isAdmin dialogOnly dialogStudent={detailStudent} dialogRequest={detailRequest} onDialogClose={() => setDetailStudent(null)} onChanged={onChanged} />
     </>
   )
 }
 
-function PaymentCard({ student, payments, arrears, onHistory, onAdd }: { student: Student; payments: Payment[]; arrears?: { months: string[]; amount: number }; onHistory: () => void; onAdd: () => void }) {
+function PaymentCard({ student, payments, arrears, onOpen, onHistory, onAdd }: { student: Student; payments: Payment[]; arrears?: { months: string[]; amount: number }; onOpen: () => void; onHistory: () => void; onAdd: () => void }) {
   const best = bestPayment(payments); const total = payments.filter((payment) => payment.status !== 'Unpaid').reduce((sum, payment) => sum + Number(payment.amount), 0)
-  return <Paper p="md" radius="md" withBorder><Group justify="space-between" align="flex-start" wrap="nowrap"><Group wrap="nowrap" style={{ minWidth: 0 }}><PersonAvatar name={student.name} src={publicImageUrl('student-photos', student.photo_path)} size={48} /><Box style={{ minWidth: 0 }}><Text fw={800} truncate>{student.name}</Text><Text size="xs" c="dimmed" truncate>{student.student_phone || student.parent_contact || 'No phone'}</Text><Text size="xs" c="dimmed">RM {money(student.monthly_fee || 0)} / month</Text></Box></Group><StatusBadge status={best?.status} /></Group><SimpleGrid cols={2} mt="md"><Box><Text size="xs" c="dimmed">Received</Text><Text fw={700}>RM {money(total)}</Text></Box><Box><Text size="xs" c="dimmed">Outstanding</Text><Text fw={700}>{arrears?.months.length || 0} months</Text><Text size="xs" c="dimmed">RM {money(arrears?.amount || 0)}</Text></Box></SimpleGrid><Group grow mt="md"><Button variant="light" leftSection={<IconHistory size={16} />} onClick={onHistory}>History</Button><Button leftSection={<IconPlus size={16} />} onClick={onAdd}>Add</Button></Group></Paper>
+  return <Paper className="payment-student-card" role="button" tabIndex={0} p="md" radius="md" withBorder onClick={onOpen} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onOpen() } }}><Group justify="space-between" align="flex-start" wrap="nowrap"><Group wrap="nowrap" style={{ minWidth: 0 }}><PersonAvatar name={student.name} src={publicImageUrl('student-photos', student.photo_path)} size={48} /><Box style={{ minWidth: 0 }}><Text fw={800} truncate>{student.name}</Text><Text size="xs" c="dimmed" truncate>{student.student_phone || student.parent_contact || 'No phone'}</Text><Text size="xs" c="dimmed">RM {money(student.monthly_fee || 0)} / month</Text></Box></Group><StatusBadge status={best?.status} /></Group><SimpleGrid cols={2} mt="md"><Box><Text size="xs" c="dimmed">Received</Text><Text fw={700}>RM {money(total)}</Text></Box><Box><Text size="xs" c="dimmed">Outstanding</Text><Text fw={700}>{arrears?.months.length || 0} months</Text><Text size="xs" c="dimmed">RM {money(arrears?.amount || 0)}</Text></Box></SimpleGrid><Group grow mt="md"><Button variant="light" leftSection={<IconHistory size={16} />} onClick={(event) => { event.stopPropagation(); onHistory() }}>History</Button><Button leftSection={<IconPlus size={16} />} onClick={(event) => { event.stopPropagation(); onAdd() }}>Add</Button></Group></Paper>
 }
 
 function StatusBadge({ status }: { status?: PaymentStatus }) {
