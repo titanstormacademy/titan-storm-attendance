@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { ActionIcon, Alert, AppShell, Avatar, Box, Button, Center, Group, Image, Menu, NavLink, Paper, Select, Stack, Text, ThemeIcon, Title, useComputedColorScheme, useMantineColorScheme } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { useQuery } from '@tanstack/react-query'
-import { IconAlertCircle, IconBallBasketball, IconBuilding, IconCalendarEvent, IconCash, IconChartBar, IconChevronDown, IconClipboardCheck, IconLogout, IconMenu2, IconMoon, IconSchool, IconSettings, IconSun, IconUsers, type Icon } from '@tabler/icons-react'
+import { IconAlertCircle, IconBallBasketball, IconBuilding, IconCalendarEvent, IconChartBar, IconChevronDown, IconClipboardCheck, IconLogout, IconMenu2, IconMoon, IconSchool, IconSettings, IconSun, IconUsers, type Icon } from '@tabler/icons-react'
 import { useAuth } from './contexts/useAuth'
 import { getAcademySettings, getBootstrapData, getBranches } from './lib/api'
 import { isSupabaseConfigured, publicImageUrl } from './lib/supabase'
@@ -15,12 +15,11 @@ const DashboardPage = lazy(() => import('./pages/DashboardPage').then((module) =
 const AttendancePage = lazy(() => import('./pages/AttendancePage').then((module) => ({ default: module.AttendancePage })))
 const StudentsPage = lazy(() => import('./pages/StudentsPage').then((module) => ({ default: module.StudentsPage })))
 const ClassesPage = lazy(() => import('./pages/ClassesPage').then((module) => ({ default: module.ClassesPage })))
-const PaymentsPage = lazy(() => import('./pages/PaymentsPage').then((module) => ({ default: module.PaymentsPage })))
 const CoachesPage = lazy(() => import('./pages/CoachesPage').then((module) => ({ default: module.CoachesPage })))
 const ReportsPage = lazy(() => import('./pages/ReportsPage').then((module) => ({ default: module.ReportsPage })))
 const SettingsPage = lazy(() => import('./pages/SettingsPage').then((module) => ({ default: module.SettingsPage })))
 
-export type PageKey = 'dashboard' | 'attendance' | 'students' | 'classes' | 'payments' | 'coaches' | 'reports' | 'settings'
+export type PageKey = 'dashboard' | 'attendance' | 'students' | 'classes' | 'coaches' | 'reports' | 'settings'
 
 interface NavItem {
   key: PageKey
@@ -36,7 +35,6 @@ const navigation: NavItem[] = [
   { key: 'attendance', label: 'Attendance', icon: IconClipboardCheck },
   { key: 'students', label: 'Students', icon: IconUsers },
   { key: 'classes', label: 'Classes & sessions', icon: IconCalendarEvent, admin: true },
-  { key: 'payments', label: 'Payments', icon: IconCash, admin: true },
   { key: 'coaches', label: 'Coaches', icon: IconSchool, admin: true },
   { key: 'reports', label: 'Reports', icon: IconChartBar, admin: true },
   { key: 'settings', label: 'Settings', icon: IconSettings, admin: true },
@@ -360,9 +358,8 @@ function renderPage(page: PageKey, props: PageProps) {
     case 'attendance': return <AttendancePage branchId={props.branchId} data={props.data} isAdmin={props.isAdmin} onRegisterStudent={props.registerStudentFromAttendance} />
     case 'students': return <StudentsPage branchId={props.branchId} data={props.data} isAdmin={props.isAdmin} createRequest={props.studentCreateRequest} onCreateHandled={props.onStudentCreateHandled} onChanged={props.onChanged} />
     case 'classes': return <ClassesPage branchId={props.branchId} data={props.data} onChanged={props.onChanged} />
-    case 'payments': return <PaymentsPage branchId={props.branchId} data={props.data} onChanged={props.onChanged} />
     case 'coaches': return <CoachesPage branchId={props.branchId} data={props.data} onChanged={props.onChanged} />
-    case 'reports': return <ReportsPage branchId={props.branchId} data={props.data} />
+    case 'reports': return <ReportsPage branchId={props.branchId} data={props.data} onChanged={props.onChanged} />
     case 'settings': return <SettingsPage branches={props.branches} settings={props.settings} onChanged={props.refreshAll} />
     default: return <DashboardPage data={props.data} branchName={props.branchName} isAdmin={props.isAdmin} />
   }

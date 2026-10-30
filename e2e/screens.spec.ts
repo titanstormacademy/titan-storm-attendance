@@ -125,7 +125,6 @@ const screens = [
   { label: 'Attendance', heading: 'Attendance' },
   { label: 'Students', heading: 'Students' },
   { label: 'Classes & sessions', heading: 'Classes' },
-  { label: 'Payments', heading: 'Payments' },
   { label: 'Coaches', heading: 'Coaches' },
   { label: 'Reports', heading: 'Reports' },
   { label: 'Settings', heading: 'Settings' },
@@ -165,7 +164,11 @@ test('student summary shows attendance, payment status, and the simplified payme
 
 test('payment student rows open the shared student summary without replacing payment actions', async ({ page, isMobile }) => {
   await loginAdmin(page)
-  await navigate(page, Boolean(isMobile), 'Payments', 'Payments')
+  await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
+  await expect(page.getByText('Payments', { exact: true })).toHaveCount(0)
+  await expect(page.locator('.stat-card').filter({ hasText: 'Students attended' })).toContainText('1 / 1')
+  await expect(page.locator('.stat-card').filter({ hasText: 'Meeting target' })).toContainText('1 / 1')
+  await expect(page.locator('.stat-card').filter({ hasText: 'Fully paid' })).toContainText('1 / 1')
   const search = page.getByLabel('Search payment students by name')
   await search.fill('blake')
   await expect(page.getByText('No students match this name.')).toBeVisible()
@@ -207,6 +210,7 @@ test('trial attendance is tagged and excluded from counted report sessions', asy
   await markTrial.click()
   await expect(trialToggle).toHaveText('Trial session ✓')
   await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
+  await page.getByText('Attendance grid', { exact: true }).click()
   const trialStudent = page.getByRole('button', { name: /Blake Trial/ })
   await expect(trialStudent).toContainText('1')
   await trialStudent.click()
@@ -248,6 +252,7 @@ test('student photo lightbox stays contained on phone screens', async ({ page, i
 test('reports can be filtered by student name', async ({ page, isMobile }) => {
   await loginAdmin(page)
   await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
+  await page.getByText('Attendance grid', { exact: true }).click()
   await expect(page.getByRole('button', { name: /Avery Basketball Student/ })).toBeVisible()
   await expect(page.getByRole('button', { name: /Blake Trial/ })).toBeVisible()
   await page.getByLabel('Search report students').fill('blake')
@@ -264,6 +269,7 @@ test('reports can be filtered by student name', async ({ page, isMobile }) => {
 test('filtered attendance grid can be exported to Excel', async ({ page, isMobile }) => {
   await loginAdmin(page)
   await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
+  await page.getByText('Attendance grid', { exact: true }).click()
   await page.getByLabel('Search report students').fill('blake')
   await page.getByText('Grid', { exact: true }).click()
   const downloadPromise = page.waitForEvent('download')
@@ -289,7 +295,7 @@ test('filtered attendance grid can be exported to Excel', async ({ page, isMobil
 test('receipt images are compressed before OCR upload', async ({ page, isMobile, browserName }) => {
   test.skip(isMobile && browserName !== 'webkit', 'Receipt compression runs in Chromium and mobile WebKit')
   await loginAdmin(page)
-  await navigate(page, Boolean(isMobile), 'Payments', 'Payments')
+  await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
   await page.getByRole('button', { name: 'Record payment' }).click()
   const dataUrl = await page.evaluate(() => {
     const canvas = document.createElement('canvas')
@@ -325,6 +331,7 @@ test('reports combine attendance from multiple selected months', async ({ page, 
   const comparisonMonthLabel = new Intl.DateTimeFormat('en-US', { month: 'long' }).format(new Date(now.getFullYear(), comparisonMonth, 1))
   await loginAdmin(page)
   await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
+  await page.getByText('Attendance grid', { exact: true }).click()
   const student = page.getByRole('button', { name: /Avery Basketball Student/ })
   await expect(student.locator('.report-total')).toHaveText('2')
   await page.getByLabel('Filter report by months').click()
@@ -341,6 +348,7 @@ test('bootstrap failures show a retry action instead of an endless skeleton', as
 test('report and settings failures remain visible with retry actions', async ({ page, isMobile }) => {
   await loginAdmin(page, { failReport: true, failSettings: true })
   await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
+  await page.getByText('Attendance grid', { exact: true }).click()
   await expect(page.getByText('Could not load report')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Copy' })).toBeDisabled()
   await navigate(page, Boolean(isMobile), 'Settings', 'Settings')
@@ -381,7 +389,7 @@ test('primary interaction on every admin screen is reachable', async ({ page, is
   await expect(page.getByRole('dialog')).toBeVisible()
   await page.getByRole('button', { name: 'Cancel' }).click()
 
-  await navigate(page, Boolean(isMobile), 'Payments', 'Payments')
+  await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
   await page.getByRole('button', { name: 'Record payment' }).click()
   await expect(page.getByRole('dialog')).toBeVisible()
   await page.getByRole('button', { name: 'Cancel' }).click()
@@ -392,6 +400,7 @@ test('primary interaction on every admin screen is reachable', async ({ page, is
   await page.getByRole('button', { name: 'Cancel' }).click()
 
   await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
+  await page.getByText('Attendance grid', { exact: true }).click()
   await expect(page.getByRole('button', { name: 'Copy' })).toBeVisible()
 
   await navigate(page, Boolean(isMobile), 'Settings', 'Settings')

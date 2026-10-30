@@ -1,21 +1,21 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import dayjs from 'dayjs'
 import { Alert, Badge, Box, Button, FileInput, Grid, Group, Modal, MultiSelect, NumberInput, Paper, SegmentedControl, Select, SimpleGrid, Stack, Table, Text, TextInput, Textarea } from '@mantine/core'
 import { useDisclosure } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
-import { IconAlertCircle, IconCash, IconCheck, IconEdit, IconEye, IconHistory, IconPlus, IconReceipt, IconRobot, IconSearch, IconTrash } from '@tabler/icons-react'
-import { recordStudentPayment, removeReceiptIfUnreferenced, removeUploadedImage, scanReceipt, uploadImage } from '../lib/api'
+import { IconAlertCircle, IconCash, IconCheck, IconEdit, IconEye, IconHistory, IconPlus, IconReceipt, IconRobot, IconSearch, IconTrash, IconUsers } from '@tabler/icons-react'
+import { getAttendanceReport, recordStudentPayment, removeReceiptIfUnreferenced, removeUploadedImage, scanReceipt, uploadImage } from '../lib/api'
 import { deletePayment, findDuplicateReference, openReceipt, updatePayment } from '../lib/paymentOperations'
 import { PageHeader, PersonAvatar, StatCard } from '../components/ui'
 import { StudentsPage } from './StudentsPage'
 import { publicImageUrl } from '../lib/supabase'
 import { useNavigationGuard } from '../contexts/useNavigationGuard'
-import type { BootstrapData, Payment, PaymentMethod, PaymentStatus, Student } from '../types/models'
+import type { Attendance, BootstrapData, Payment, PaymentMethod, PaymentStatus, Student } from '../types/models'
 
 const methods: PaymentMethod[] = ['Cash', 'Bank Transfer', "Touch 'n Go eWallet", 'Online', 'Others']
 const statuses: PaymentStatus[] = ['Paid', 'Partial', 'Unpaid']
 
-export function PaymentsPage({ branchId, data, onChanged }: { branchId: number; data: BootstrapData; onChanged: () => Promise<unknown> }) {
+export function PaymentsPage({ branchId, data, onChanged, reportMode = false, onOpenAttendanceGrid }: { branchId: number; data: BootstrapData; onChanged: () => Promise<unknown>; reportMode?: boolean; onOpenAttendanceGrid?: () => void }) {
   const [formOpened, formModal] = useDisclosure(false)
   const [historyOpened, historyModal] = useDisclosure(false)
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null)
@@ -39,6 +39,9 @@ export function PaymentsPage({ branchId, data, onChanged }: { branchId: number; 
   const [periodMode, setPeriodMode] = useState<'month' | 'year'>('month')
   const [period, setPeriod] = useState(dayjs().format('YYYY-MM'))
   const [year, setYear] = useState(dayjs().format('YYYY'))
+  const [attendanceRecords, setAttendanceRecords] = useState<Attendance[]>([])
+  const [attendanceLoading, setAttendanceLoading] = useState(false)
+  const [attendanceError, setAttendanceError] = useState('')
   const [formBaseline, setFormBaseline] = useState('')
   const ocrRequest = useRef(0)
   const submitLock = useRef(false)
@@ -46,16 +49,40 @@ export function PaymentsPage({ branchId, data, onChanged }: { branchId: number; 
   const dirty = formOpened && (Boolean(receipt) || formSnapshot !== formBaseline)
   const paymentValidation = amount === '' || !status ? '' : status === 'Unpaid' && Number(amount) > 0 ? 'Unpaid records must have RM0 received.' : status !== 'Unpaid' && Number(amount) <= 0 ? `${status} records require an amount greater than RM0.` : ''
   const { confirmDiscard } = useNavigationGuard('payment-editor', { dirty, pending: saving })
+  const reportStart = (periodMode === 'month' ? dayjs(`${period}-01`).startOf('month') : dayjs(`${year}-01-01`).startOf('year')).format('YYYY-MM-DD')
+  const reportEnd = (periodMode === 'month' ? dayjs(`${period}-01`).endOf('month') : dayjs(`${year}-01-01`).endOf('year')).format('YYYY-MM-DD')
+
+  useEffect(() => {
+    if (!reportMode) return
+    let active = true
+    setAttendanceLoading(true)
+    setAttendanceError('')
+    getAttendanceReport(branchId, reportStart, reportEnd)
+      .then((records) => { if (active) setAttendanceRecords(records.filter((record) => !record.is_trial)) })
+      .catch((error) => { if (active) setAttendanceError(error instanceof Error ? error.message : 'Could not load attendance') })
+      .finally(() => { if (active) setAttendanceLoading(false) })
+    return () => { active = false }
+  }, [branchId, reportEnd, reportMode, reportStart])
 
   const periodPayments = data.payments.filter((payment) => periodMode === 'month' ? payment.fee_month.startsWith(period) : payment.fee_month.startsWith(year))
   const collected = periodPayments.filter((payment) => payment.status !== 'Unpaid').reduce((sum, payment) => sum + Number(payment.amount), 0)
   const enrolledIds = new Set(data.enrollments.filter((item) => !item.end_date).map((item) => item.student_id))
   const activeEnrolled = data.students.filter((student) => student.status === 'Active' && enrolledIds.has(student.id))
+  const reportStudents = data.students.filter((student) => student.status === 'Active' && data.enrollments.some((enrollment) => enrollment.student_id === student.id && enrollment.start_date <= reportEnd && (!enrollment.end_date || enrollment.end_date >= reportStart)))
+  const listedStudents = reportMode ? reportStudents : activeEnrolled
+  const reportMonths = monthsBetween(dayjs(reportStart), dayjs(reportEnd))
+  const attendanceByStudent = new Map(listedStudents.map((student) => {
+    const attended = attendanceRecords.filter((record) => record.student_id === student.id).length
+    const target = attendanceTargetForStudent(student.id, reportMonths, data)
+    return [student.id, { attended, target }]
+  }))
+  const studentsAttended = listedStudents.filter((student) => (attendanceByStudent.get(student.id)?.attended || 0) > 0).length
+  const studentsMeetingTarget = listedStudents.filter((student) => { const summary = attendanceByStudent.get(student.id); return Boolean(summary?.target && summary.attended >= summary.target) }).length
   const searchNeedle = studentSearch.trim().toLowerCase()
-  const visibleStudents = activeEnrolled.filter((student) => !searchNeedle || student.name.toLowerCase().includes(searchNeedle))
-  const paidIds = new Set(activeEnrolled.filter((student) => isStudentSettledForPeriod(data, student, periodMode, period, year)).map((student) => student.id))
+  const visibleStudents = listedStudents.filter((student) => !searchNeedle || student.name.toLowerCase().includes(searchNeedle))
+  const paidIds = new Set(listedStudents.filter((student) => isStudentSettledForPeriod(data, student, periodMode, period, year)).map((student) => student.id))
   const arrears = useMemo(() => calculateArrears(data), [data])
-  const outstandingStudents = activeEnrolled.filter((student) => (arrears.get(student.id)?.months.length || 0) > 0)
+  const outstandingStudents = listedStudents.filter((student) => (arrears.get(student.id)?.months.length || 0) > 0)
   const outstandingAmount = outstandingStudents.reduce((sum, student) => sum + (arrears.get(student.id)?.amount || 0), 0)
   const months = useMemo(() => {
     const starts = data.enrollments.map((item) => dayjs(item.start_date).startOf('month')).filter((date) => date.isValid())
@@ -178,20 +205,24 @@ export function PaymentsPage({ branchId, data, onChanged }: { branchId: number; 
 
   return (
     <>
-      <PageHeader title="Payments" description="Student fees, receipts, payment history, and outstanding months" action={<Group><SegmentedControl value={periodMode} onChange={(value) => setPeriodMode(value as 'month' | 'year')} data={[{ value: 'month', label: 'Month' }, { value: 'year', label: 'Year' }]} />{periodMode === 'month' ? <Select value={period} onChange={(value) => setPeriod(value || dayjs().format('YYYY-MM'))} data={months} w={180} /> : <Select value={year} onChange={(value) => setYear(value || dayjs().format('YYYY'))} data={years} w={120} />}<Button leftSection={<IconPlus size={17} />} onClick={() => openNew()}>Record payment</Button></Group>} />
-      <SimpleGrid cols={{ base: 1, xs: 2, md: 3 }} mb="xl">
+      <PageHeader title={reportMode ? 'Reports' : 'Payments'} description={reportMode ? 'Branch attendance, fee collection, and student status in one view' : 'Student fees, receipts, payment history, and outstanding months'} action={<Group><SegmentedControl value={periodMode} onChange={(value) => setPeriodMode(value as 'month' | 'year')} data={[{ value: 'month', label: 'Month' }, { value: 'year', label: 'Year' }]} />{periodMode === 'month' ? <Select value={period} onChange={(value) => setPeriod(value || dayjs().format('YYYY-MM'))} data={months} w={180} /> : <Select value={year} onChange={(value) => setYear(value || dayjs().format('YYYY'))} data={years} w={120} />}<Button leftSection={<IconPlus size={17} />} onClick={() => openNew()}>Record payment</Button></Group>} />
+      {reportMode && <SegmentedControl value="overview" onChange={(value) => { if (value === 'attendance') onOpenAttendanceGrid?.() }} data={[{ value: 'overview', label: 'Overview' }, { value: 'attendance', label: 'Attendance grid' }]} mb="md" />}
+      {attendanceError && <Alert color="red" title="Attendance overview unavailable" mb="md">{attendanceError}</Alert>}
+      <SimpleGrid cols={{ base: 1, xs: 2, lg: reportMode ? 5 : 3 }} mb="xl">
+        {reportMode && <StatCard label="Students attended" value={attendanceLoading ? '…' : `${studentsAttended} / ${listedStudents.length}`} detail="Attended at least once" icon={IconUsers} color="violet" />}
+        {reportMode && <StatCard label="Meeting target" value={attendanceLoading ? '…' : `${studentsMeetingTarget} / ${listedStudents.length}`} detail="Four sessions per class monthly" icon={IconCheck} color="teal" />}
+        <StatCard label="Fully paid" value={reportMode ? `${paidIds.size} / ${listedStudents.length}` : paidIds.size} detail={reportMode ? (periodMode === 'month' ? dayjs(`${period}-01`).format('MMMM YYYY') : year) : `${activeEnrolled.length} active enrolled students`} icon={IconCheck} color="blue" />
         <StatCard label="Applied to fees" value={`RM ${money(collected)}`} detail={periodMode === 'month' ? dayjs(`${period}-01`).format('MMMM YYYY') : year} icon={IconCash} color="green" />
-        <StatCard label="Fully paid" value={paidIds.size} detail={`${activeEnrolled.length} active enrolled students`} icon={IconCheck} color="blue" />
         <StatCard label="All-time outstanding" value={`RM ${money(outstandingAmount)}`} detail={`${outstandingStudents.length} students · from enrollment start`} icon={IconAlertCircle} color="red" />
       </SimpleGrid>
 
       <Paper radius="lg" withBorder>
-        <Box p="lg"><Group justify="space-between"><Box><Text fw={800} size="lg">Student collection status</Text><Text c="dimmed" size="sm">Open a student to review or correct every payment.</Text></Box><Badge variant="light" size="lg">{periodMode === 'month' ? dayjs(`${period}-01`).format('MMM YYYY') : year}</Badge></Group><TextInput mt="md" aria-label="Search payment students by name" leftSection={<IconSearch size={17} />} placeholder="Search student name…" value={studentSearch} onChange={(event) => setStudentSearch(event.currentTarget.value)} /><Text size="xs" c="dimmed" mt={6}>{visibleStudents.length === activeEnrolled.length ? `${activeEnrolled.length} student${activeEnrolled.length === 1 ? '' : 's'}` : `${visibleStudents.length} of ${activeEnrolled.length} students`}</Text></Box>
+        <Box p="lg"><Group justify="space-between"><Box><Text fw={800} size="lg">{reportMode ? 'Student breakdown' : 'Student collection status'}</Text><Text c="dimmed" size="sm">{reportMode ? 'Compare each student’s attendance and payment status.' : 'Open a student to review or correct every payment.'}</Text></Box><Badge variant="light" size="lg">{periodMode === 'month' ? dayjs(`${period}-01`).format('MMM YYYY') : year}</Badge></Group><TextInput mt="md" aria-label="Search payment students by name" leftSection={<IconSearch size={17} />} placeholder="Search student name…" value={studentSearch} onChange={(event) => setStudentSearch(event.currentTarget.value)} /><Text size="xs" c="dimmed" mt={6}>{visibleStudents.length === listedStudents.length ? `${listedStudents.length} student${listedStudents.length === 1 ? '' : 's'}` : `${visibleStudents.length} of ${listedStudents.length} students`}</Text></Box>
         {!visibleStudents.length && <Text c="dimmed" ta="center" py="xl">No students match this name.</Text>}
-        <Stack hiddenFrom="md" p="md" gap="sm">{visibleStudents.map((student) => <PaymentCard key={student.id} student={student} payments={periodPayments.filter((payment) => payment.student_id === student.id)} arrears={arrears.get(student.id)} onOpen={() => showStudent(student)} onHistory={() => showHistory(student)} onAdd={() => openNew(student)} />)}</Stack>
-        <Box visibleFrom="md"><Table.ScrollContainer minWidth={820}><Table verticalSpacing="sm" horizontalSpacing="lg" highlightOnHover><Table.Thead><Table.Tr><Table.Th>Student</Table.Th><Table.Th>Monthly fee</Table.Th><Table.Th>Status</Table.Th><Table.Th>Received</Table.Th><Table.Th>Method / reference</Table.Th><Table.Th>Outstanding</Table.Th><Table.Th /></Table.Tr></Table.Thead><Table.Tbody>{visibleStudents.map((student) => {
-          const rows = periodPayments.filter((payment) => payment.student_id === student.id); const best = bestPayment(rows); const total = rows.filter((payment) => payment.status !== 'Unpaid').reduce((sum, payment) => sum + Number(payment.amount), 0); const due = arrears.get(student.id)
-          return <Table.Tr key={student.id} className="payment-student-row" tabIndex={0} onClick={() => showStudent(student)} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); showStudent(student) } }}><Table.Td><Group wrap="nowrap"><PersonAvatar name={student.name} src={publicImageUrl('student-photos', student.photo_path)} size={42} /><Box><Text fw={700}>{student.name}</Text><Text size="xs" c="dimmed">{student.student_phone || student.parent_contact || 'No phone'}</Text></Box></Group></Table.Td><Table.Td>RM {money(student.monthly_fee || 0)}</Table.Td><Table.Td><StatusBadge status={best?.status} /></Table.Td><Table.Td><Text fw={650}>RM {money(total)}</Text><Text size="xs" c="dimmed">{best?.date_received ? dayjs(best.date_received).format('D MMM YYYY') : '—'}</Text></Table.Td><Table.Td><Text size="sm">{best?.method || '—'}</Text><Text size="xs" c="dimmed">{best?.reference_no || 'No reference'}</Text></Table.Td><Table.Td><Text fw={650}>{due?.months.length || 0} months</Text><Text size="xs" c="dimmed">RM {money(due?.amount || 0)}</Text></Table.Td><Table.Td><Group gap="xs" wrap="nowrap"><Button variant="subtle" size="xs" onClick={(event) => { event.stopPropagation(); showHistory(student) }}>History</Button><Button variant="light" size="xs" onClick={(event) => { event.stopPropagation(); openNew(student) }}>Add</Button></Group></Table.Td></Table.Tr>
+        <Stack hiddenFrom="md" p="md" gap="sm">{visibleStudents.map((student) => <PaymentCard key={student.id} student={student} payments={periodPayments.filter((payment) => payment.student_id === student.id)} arrears={arrears.get(student.id)} attendance={reportMode ? attendanceByStudent.get(student.id) : undefined} status={reportMode ? paymentStatusForPeriod(data, student, periodMode, period, year) : undefined} onOpen={() => showStudent(student)} onHistory={() => showHistory(student)} onAdd={() => openNew(student)} />)}</Stack>
+        <Box visibleFrom="md"><Table.ScrollContainer minWidth={820}><Table verticalSpacing="sm" horizontalSpacing="lg" highlightOnHover><Table.Thead><Table.Tr><Table.Th>Student</Table.Th>{reportMode && <Table.Th>Attendance</Table.Th>}<Table.Th>Monthly fee</Table.Th><Table.Th>Status</Table.Th><Table.Th>Received</Table.Th><Table.Th>Method / reference</Table.Th><Table.Th>Outstanding</Table.Th><Table.Th /></Table.Tr></Table.Thead><Table.Tbody>{visibleStudents.map((student) => {
+          const rows = periodPayments.filter((payment) => payment.student_id === student.id); const best = bestPayment(rows); const periodStatus = reportMode ? paymentStatusForPeriod(data, student, periodMode, period, year) : best?.status; const total = rows.filter((payment) => payment.status !== 'Unpaid').reduce((sum, payment) => sum + Number(payment.amount), 0); const due = arrears.get(student.id)
+          return <Table.Tr key={student.id} className="payment-student-row" tabIndex={0} onClick={() => showStudent(student)} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); showStudent(student) } }}><Table.Td><Group wrap="nowrap"><PersonAvatar name={student.name} src={publicImageUrl('student-photos', student.photo_path)} size={42} /><Box><Text fw={700}>{student.name}</Text><Text size="xs" c="dimmed">{student.student_phone || student.parent_contact || 'No phone'}</Text></Box></Group></Table.Td>{reportMode && <Table.Td><AttendanceValue summary={attendanceByStudent.get(student.id)} loading={attendanceLoading} /></Table.Td>}<Table.Td>RM {money(student.monthly_fee || 0)}</Table.Td><Table.Td><StatusBadge status={periodStatus} /></Table.Td><Table.Td><Text fw={650}>RM {money(total)}</Text><Text size="xs" c="dimmed">{best?.date_received ? dayjs(best.date_received).format('D MMM YYYY') : '—'}</Text></Table.Td><Table.Td><Text size="sm">{best?.method || '—'}</Text><Text size="xs" c="dimmed">{best?.reference_no || 'No reference'}</Text></Table.Td><Table.Td><Text fw={650}>{due?.months.length || 0} months</Text><Text size="xs" c="dimmed">RM {money(due?.amount || 0)}</Text></Table.Td><Table.Td><Group gap="xs" wrap="nowrap"><Button variant="subtle" size="xs" onClick={(event) => { event.stopPropagation(); showHistory(student) }}>History</Button><Button variant="light" size="xs" onClick={(event) => { event.stopPropagation(); openNew(student) }}>Add</Button></Group></Table.Td></Table.Tr>
         })}</Table.Tbody></Table></Table.ScrollContainer></Box>
       </Paper>
 
@@ -221,9 +252,17 @@ export function PaymentsPage({ branchId, data, onChanged }: { branchId: number; 
   )
 }
 
-function PaymentCard({ student, payments, arrears, onOpen, onHistory, onAdd }: { student: Student; payments: Payment[]; arrears?: { months: string[]; amount: number }; onOpen: () => void; onHistory: () => void; onAdd: () => void }) {
+function PaymentCard({ student, payments, arrears, attendance, status, onOpen, onHistory, onAdd }: { student: Student; payments: Payment[]; arrears?: { months: string[]; amount: number }; attendance?: { attended: number; target: number }; status?: PaymentStatus; onOpen: () => void; onHistory: () => void; onAdd: () => void }) {
   const best = bestPayment(payments); const total = payments.filter((payment) => payment.status !== 'Unpaid').reduce((sum, payment) => sum + Number(payment.amount), 0)
-  return <Paper className="payment-student-card" role="button" tabIndex={0} p="md" radius="md" withBorder onClick={onOpen} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onOpen() } }}><Group justify="space-between" align="flex-start" wrap="nowrap"><Group wrap="nowrap" style={{ minWidth: 0 }}><PersonAvatar name={student.name} src={publicImageUrl('student-photos', student.photo_path)} size={48} /><Box style={{ minWidth: 0 }}><Text fw={800} truncate>{student.name}</Text><Text size="xs" c="dimmed" truncate>{student.student_phone || student.parent_contact || 'No phone'}</Text><Text size="xs" c="dimmed">RM {money(student.monthly_fee || 0)} / month</Text></Box></Group><StatusBadge status={best?.status} /></Group><SimpleGrid cols={2} mt="md"><Box><Text size="xs" c="dimmed">Received</Text><Text fw={700}>RM {money(total)}</Text></Box><Box><Text size="xs" c="dimmed">Outstanding</Text><Text fw={700}>{arrears?.months.length || 0} months</Text><Text size="xs" c="dimmed">RM {money(arrears?.amount || 0)}</Text></Box></SimpleGrid><Group grow mt="md"><Button variant="light" leftSection={<IconHistory size={16} />} onClick={(event) => { event.stopPropagation(); onHistory() }}>History</Button><Button leftSection={<IconPlus size={16} />} onClick={(event) => { event.stopPropagation(); onAdd() }}>Add</Button></Group></Paper>
+  return <Paper className="payment-student-card" role="button" tabIndex={0} p="md" radius="md" withBorder onClick={onOpen} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) { event.preventDefault(); onOpen() } }}><Group justify="space-between" align="flex-start" wrap="nowrap"><Group wrap="nowrap" style={{ minWidth: 0 }}><PersonAvatar name={student.name} src={publicImageUrl('student-photos', student.photo_path)} size={48} /><Box style={{ minWidth: 0 }}><Text fw={800} truncate>{student.name}</Text><Text size="xs" c="dimmed" truncate>{student.student_phone || student.parent_contact || 'No phone'}</Text><Text size="xs" c="dimmed">RM {money(student.monthly_fee || 0)} / month</Text></Box></Group><StatusBadge status={status || best?.status} /></Group><SimpleGrid cols={attendance ? 3 : 2} mt="md">{attendance && <Box><Text size="xs" c="dimmed">Attendance</Text><AttendanceValue summary={attendance} /></Box>}<Box><Text size="xs" c="dimmed">Received</Text><Text fw={700}>RM {money(total)}</Text></Box><Box><Text size="xs" c="dimmed">Outstanding</Text><Text fw={700}>{arrears?.months.length || 0} months</Text><Text size="xs" c="dimmed">RM {money(arrears?.amount || 0)}</Text></Box></SimpleGrid><Group grow mt="md"><Button variant="light" leftSection={<IconHistory size={16} />} onClick={(event) => { event.stopPropagation(); onHistory() }}>History</Button><Button leftSection={<IconPlus size={16} />} onClick={(event) => { event.stopPropagation(); onAdd() }}>Add</Button></Group></Paper>
+}
+
+function AttendanceValue({ summary, loading = false }: { summary?: { attended: number; target: number }; loading?: boolean }) {
+  if (loading) return <Text fw={700}>…</Text>
+  const attended = summary?.attended || 0
+  const target = summary?.target || 0
+  const remaining = Math.max(0, target - attended)
+  return <><Text fw={700}>{attended} / {target}</Text><Text size="xs" c="dimmed">{remaining} below target</Text></>
 }
 
 function StatusBadge({ status }: { status?: PaymentStatus }) {
@@ -232,6 +271,24 @@ function StatusBadge({ status }: { status?: PaymentStatus }) {
 
 function bestPayment(rows: Payment[]) {
   return rows.find((payment) => payment.status === 'Paid') || rows.find((payment) => payment.status === 'Partial') || rows[0]
+}
+
+function monthsBetween(start: dayjs.Dayjs, end: dayjs.Dayjs) {
+  const months: dayjs.Dayjs[] = []
+  let cursor = start.startOf('month')
+  const last = end.startOf('month')
+  while (cursor.valueOf() <= last.valueOf()) {
+    months.push(cursor)
+    cursor = cursor.add(1, 'month')
+  }
+  return months
+}
+
+function attendanceTargetForStudent(studentId: number, months: dayjs.Dayjs[], data: BootstrapData) {
+  return months.reduce((total, month) => {
+    const classIds = new Set(data.enrollments.filter((enrollment) => enrollment.student_id === studentId && dayjs(enrollment.start_date).startOf('month').valueOf() <= month.valueOf() && (!enrollment.end_date || dayjs(enrollment.end_date).startOf('month').valueOf() >= month.valueOf())).map((enrollment) => enrollment.class_id))
+    return total + classIds.size * 4
+  }, 0)
 }
 
 function dueMonthsForStudent(data: BootstrapData, studentId: number) {
@@ -260,6 +317,13 @@ function monthOutstanding(data: BootstrapData, student: Student, month: string) 
 function isStudentSettledForPeriod(data: BootstrapData, student: Student, mode: 'month' | 'year', period: string, year: string) {
   const due = dueMonthsForStudent(data, student.id).filter((month) => mode === 'month' ? month === period : month.startsWith(year))
   return due.length > 0 && due.every((month) => monthOutstanding(data, student, month) === 0)
+}
+
+function paymentStatusForPeriod(data: BootstrapData, student: Student, mode: 'month' | 'year', period: string, year: string): PaymentStatus | undefined {
+  const due = dueMonthsForStudent(data, student.id).filter((month) => mode === 'month' ? month === period : month.startsWith(year))
+  if (due.length && due.every((month) => monthOutstanding(data, student, month) === 0)) return 'Paid'
+  const payments = data.payments.filter((payment) => payment.student_id === student.id && (mode === 'month' ? payment.fee_month.startsWith(period) : payment.fee_month.startsWith(year)))
+  return payments.some((payment) => payment.status !== 'Unpaid' && Number(payment.amount) > 0) ? 'Partial' : undefined
 }
 
 function calculateArrears(data: BootstrapData) {

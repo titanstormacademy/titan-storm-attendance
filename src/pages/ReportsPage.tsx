@@ -5,6 +5,7 @@ import { notifications } from '@mantine/notifications'
 import { IconCheck, IconChevronDown, IconClipboard, IconFileSpreadsheet, IconSearch } from '@tabler/icons-react'
 import { getAttendanceReport } from '../lib/api'
 import { PageHeader, PageLoader } from '../components/ui'
+import { PaymentsPage } from './PaymentsPage'
 import type { AcademyClass, Attendance, BootstrapData, Student } from '../types/models'
 
 type ReportRecord = Attendance & { student: Pick<Student, 'id' | 'name' | 'status' | 'gender' | 'level'>; class: Pick<AcademyClass, 'id' | 'label'> }
@@ -26,7 +27,13 @@ const classColors = ['#ef3340', '#3b82f6', '#22c55e', '#f59e0b', '#8b5cf6', '#06
 const calendarMonths = Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, '0'))
 const monthOptions = [{ value: 'All', label: 'All months' }, ...calendarMonths.map((month) => ({ value: month, label: dayjs(`2026-${month}-01`).format('MMMM') }))]
 
-export function ReportsPage({ branchId, data }: { branchId: number; data: BootstrapData }) {
+export function ReportsPage({ branchId, data, onChanged }: { branchId: number; data: BootstrapData; onChanged: () => Promise<unknown> }) {
+  const [section, setSection] = useState<'overview' | 'attendance'>('overview')
+  if (section === 'overview') return <PaymentsPage branchId={branchId} data={data} onChanged={onChanged} reportMode onOpenAttendanceGrid={() => setSection('attendance')} />
+  return <AttendanceReport branchId={branchId} data={data} onOpenOverview={() => setSection('overview')} />
+}
+
+function AttendanceReport({ branchId, data, onOpenOverview }: { branchId: number; data: BootstrapData; onOpenOverview: () => void }) {
   const [year, setYear] = useState(dayjs().format('YYYY'))
   const [months, setMonths] = useState([dayjs().format('MM')])
   const [view, setView] = useState<'summary' | 'grid'>('summary')
@@ -157,7 +164,8 @@ export function ReportsPage({ branchId, data }: { branchId: number; data: Bootst
   const actionsDisabled = loading || Boolean(loadError) || filteredRows.length === 0
 
   return <>
-    <PageHeader title="Reports" description="Student attendance overview" action={<Group gap="xs"><Button variant="light" leftSection={<IconClipboard size={17} />} onClick={copyReport} disabled={actionsDisabled}>Copy</Button>{view === 'grid' && <Button aria-label="Export grid to Excel" leftSection={<IconFileSpreadsheet size={17} />} onClick={exportGridReport} disabled={actionsDisabled}>Excel</Button>}</Group>} />
+    <PageHeader title="Reports" description="Detailed attendance records and export" action={<Group gap="xs"><Button variant="light" leftSection={<IconClipboard size={17} />} onClick={copyReport} disabled={actionsDisabled}>Copy</Button>{view === 'grid' && <Button aria-label="Export grid to Excel" leftSection={<IconFileSpreadsheet size={17} />} onClick={exportGridReport} disabled={actionsDisabled}>Excel</Button>}</Group>} />
+    <SegmentedControl value="attendance" onChange={(value) => { if (value === 'overview') onOpenOverview() }} data={[{ value: 'overview', label: 'Overview' }, { value: 'attendance', label: 'Attendance grid' }]} mb="md" />
     <SegmentedControl value={view} onChange={(value) => { const nextView = value as 'summary' | 'grid'; setView(nextView); if (nextView === 'grid' && months.includes('All')) setMonths([dayjs().format('MM')]) }} data={[{ value: 'summary', label: 'Summary' }, { value: 'grid', label: 'Grid' }]} mb="md" />
     <Paper p="md" radius="lg" withBorder mb="md"><Grid gutter="sm" align="flex-end"><Grid.Col span={{ base: 12, md: 6 }}><TextInput label="Student" aria-label="Search report students" leftSection={<IconSearch size={17} />} placeholder="Search by student name…" value={search} onChange={(event) => setSearch(event.currentTarget.value)} /></Grid.Col><Grid.Col span={{ base: 12, xs: 6, md: 2 }}><Select label="Class" aria-label="Filter report students by class" value={classFilter} onChange={setClassFilter} data={[{ value: 'All', label: 'All classes' }, ...data.classes.map((item) => ({ value: String(item.id), label: item.label }))]} allowDeselect={false} /></Grid.Col><Grid.Col span={{ base: 6, md: 2 }}><Select label="Year" value={year} onChange={(value) => setYear(value || dayjs().format('YYYY'))} data={years} allowDeselect={false} /></Grid.Col><Grid.Col span={{ base: 6, md: 2 }}><MultiSelect label="Months" aria-label="Filter report by months" value={months} onChange={changeMonths} data={monthOptions} hidePickedOptions searchable /></Grid.Col></Grid></Paper>
     {!loading && !loadError && rows.length > 0 && <Text size="xs" c="dimmed" mb="xs" px={4}>{filteredRows.length === rows.length ? `${rows.length} students` : `${filteredRows.length} of ${rows.length} students`}</Text>}
