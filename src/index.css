@@ -1563,3 +1563,61 @@ select {
     width: 128px !important;
   }
 }
+
+.payroll-command-bar {
+  position: sticky;
+  z-index: 20;
+  top: 88px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 14px 30px -24px rgba(16, 27, 51, 0.72) !important;
+}
+
+.payroll-total-band {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  padding: 22px 26px;
+  border-radius: 16px;
+  color: white;
+  background: #16233f;
+  box-shadow: 0 18px 36px -24px rgba(16, 27, 51, 0.82);
+}
+
+.payroll-total-band .mantine-Text-root { color: inherit; }
+.payroll-total-band .mantine-Text-root[data-size='xs'] { color: #bdc7d8; }
+.payroll-grand-total { font-size: clamp(1.65rem, 3vw, 2.35rem); font-weight: 900; letter-spacing: -0.03em; }
+.payroll-total-breakdown { justify-content: flex-end; text-align: right; }
+.payroll-table thead th { white-space: nowrap; color: #697386; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.035em; text-transform: uppercase; }
+.payroll-table tbody tr { transition: background-color 0.18s ease; }
+.payroll-table tbody tr:hover { background: #fff8f3; }
+.payroll-table tfoot th { border-top: 2px solid #dfe4ec; color: #16233f; white-space: nowrap; }
+.payroll-calculated-cell { min-width: 105px; color: #475467; white-space: nowrap; }
+.payroll-row-total { min-width: 110px; color: #d4531f; white-space: nowrap; }
+.coach-total-list { overflow: hidden; border: 1px solid #e5e8ee; border-radius: 14px; background: white; }
+.coach-total-row { display: flex; align-items: center; gap: 12px; min-height: 70px; padding: 12px 16px; border-bottom: 1px solid #eef0f3; }
+.coach-total-row:last-child { border-bottom: 0; }
+.payroll-mobile-calculation { border-top: 1px solid #e8ebf0; }
+
+[data-mantine-color-scheme='dark'] .payroll-command-bar,
+[data-mantine-color-scheme='dark'] .coach-total-list { background: #131d2e; border-color: #2b3950; }
+[data-mantine-color-scheme='dark'] .payroll-table tbody tr:hover { background: #332116; }
+[data-mantine-color-scheme='dark'] .payroll-table tfoot th { color: #edf2f8; border-color: #34445e; }
+[data-mantine-color-scheme='dark'] .payroll-calculated-cell { color: #c2ccda; }
+[data-mantine-color-scheme='dark'] .coach-total-row,
+[data-mantine-color-scheme='dark'] .payroll-mobile-calculation { border-color: #2b3950; }
+
+@media (max-width: 62em) {
+  .payroll-command-bar { top: 70px; }
+  .payroll-total-band { align-items: flex-start; flex-direction: column; }
+  .payroll-total-breakdown { width: 100%; justify-content: flex-start; text-align: left; }
+}
+
+@media (max-width: 48em) {
+  .payroll-command-bar { position: static; }
+  .payroll-command-bar > .mantine-Group-root,
+  .payroll-command-bar > .mantine-Group-root > .mantine-Group-root { width: 100%; }
+  .payroll-command-bar > .mantine-Group-root > .mantine-Group-root:first-child > * { flex: 1 1 160px; }
+  .payroll-total-band { padding: 18px; }
+  .payroll-total-breakdown { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}

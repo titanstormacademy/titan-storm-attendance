@@ -8,6 +8,8 @@ import type {
   Coach,
   CoachAttendance,
   CoachPayment,
+  CoachPayrollEntry,
+  CoachPayrollMonth,
   CommissionSummary,
   Enrollment,
   HeadCoachRate,
@@ -114,6 +116,31 @@ export async function deleteClass(branchId: number, id: number) {
 
 export async function deleteCoach(branchId: number, id: number) {
   unwrap(await supabase.from('coaches').delete().eq('id', id).eq('branch_id', branchId))
+}
+
+export async function getPayrollCoaches() {
+  return (unwrap(await supabase.from('coaches').select('*').order('name')) || []) as Coach[]
+}
+
+export async function getCoachPayroll(month: string) {
+  const period = unwrap(await supabase.from('coach_payroll_months').select('*').eq('pay_month', `${month}-01`).maybeSingle()) as CoachPayrollMonth | null
+  if (!period) return { period: null, entries: [] as CoachPayrollEntry[] }
+  const entries = (unwrap(await supabase.from('coach_payroll_entries').select('*,coach:coaches(id,name),branch:branches(id,name)').eq('payroll_month_id', period.id).order('work_date').order('id')) || []) as CoachPayrollEntry[]
+  return { period, entries }
+}
+
+export async function saveCoachPayroll(input: {
+  month: string
+  customColumn1Label: string
+  customColumn2Label: string
+  entries: Array<Pick<CoachPayrollEntry, 'work_date' | 'coach_id' | 'branch_id' | 'hours' | 'hourly_rate' | 'petrol_day_rate' | 'custom_amount_1' | 'custom_amount_2' | 'remarks'> & { id?: number }>
+}) {
+  return unwrap(await supabase.rpc('save_coach_payroll', {
+    p_pay_month: `${input.month}-01`,
+    p_custom_column_1_label: input.customColumn1Label,
+    p_custom_column_2_label: input.customColumn2Label,
+    p_entries: input.entries,
+  })) as number
 }
 
 export async function saveEnrollment(studentId: number, classId: number, startDate: string) {

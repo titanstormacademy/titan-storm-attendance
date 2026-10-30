@@ -4,12 +4,12 @@ import { ActionIcon, Alert, Badge, Box, Button, Divider, Group, Modal, Paper, Sc
 import { useDisclosure } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
 import { IconArrowLeft, IconCheck, IconChevronRight, IconSearch, IconTrash, IconUserPlus, IconUsers } from '@tabler/icons-react'
-import { addCoachAttendance, ensureTodaySession, getAttendance, getCoachAttendance, markAllPresent, removeAttendance, removeCoachAttendance, setAttendanceRemark, setAttendanceStatus, setAttendanceTrial } from '../lib/api'
+import { ensureTodaySession, getAttendance, markAllPresent, removeAttendance, setAttendanceRemark, setAttendanceStatus, setAttendanceTrial } from '../lib/api'
 import { getClassSessions } from '../lib/sessionOperations'
 import { publicImageUrl } from '../lib/supabase'
 import { EmptyState, PageHeader, PageLoader, PersonAvatar, PhotoLightbox } from '../components/ui'
 import { useNavigationGuard } from '../contexts/useNavigationGuard'
-import type { AcademyClass, Attendance, BootstrapData, CoachAttendance, Session, Student } from '../types/models'
+import type { AcademyClass, Attendance, BootstrapData, Session, Student } from '../types/models'
 
 const studentLevels = ['Beginner', 'Intermediate', 'Advanced'] as const
 
@@ -22,7 +22,6 @@ export function AttendancePage({ data, isAdmin, onRegisterStudent }: { branchId:
   const [session, setSession] = useState<Session | null>(null)
   const [records, setRecords] = useState<Attendance[]>([])
   const [remarkDrafts, setRemarkDrafts] = useState<Record<number, string>>({})
-  const [coachRecords, setCoachRecords] = useState<CoachAttendance[]>([])
   const [search, setSearch] = useState('')
   const [level, setLevel] = useState<string | null>('All')
   const [loading, setLoading] = useState(false)
@@ -30,7 +29,6 @@ export function AttendancePage({ data, isAdmin, onRegisterStudent }: { branchId:
   const [reloadRequest, setReloadRequest] = useState(0)
   const [bulkPending, setBulkPending] = useState(false)
   const [walkinPending, setWalkinPending] = useState(false)
-  const [coachPending, setCoachPending] = useState(false)
   const [pendingStudents, setPendingStudents] = useState<Set<number>>(new Set())
   const sessionRequest = useRef(0)
   const sessionRef = useRef<Session | null>(null)
@@ -39,9 +37,8 @@ export function AttendancePage({ data, isAdmin, onRegisterStudent }: { branchId:
   const [walkinId, setWalkinId] = useState<string | null>(null)
   const [walkinSearch, setWalkinSearch] = useState('')
   const [walkinLevel, setWalkinLevel] = useState<string>('All')
-  const [coachId, setCoachId] = useState<string | null>(null)
   const [photoView, setPhotoView] = useState<{ src: string | null; name: string } | null>(null)
-  const mutationPending = bulkPending || walkinPending || coachPending || pendingStudents.size > 0
+  const mutationPending = bulkPending || walkinPending || pendingStudents.size > 0
   const remarksDirty = Object.entries(remarkDrafts).some(([studentId, value]) => value !== (records.find((record) => record.student_id === Number(studentId))?.remarks || ''))
   const { confirmDiscard } = useNavigationGuard('attendance-writes', { dirty: remarksDirty, pending: mutationPending })
 
@@ -128,7 +125,6 @@ export function AttendancePage({ data, isAdmin, onRegisterStudent }: { branchId:
     setLoading(true)
     setLoadError('')
     setRecords([])
-    setCoachRecords([])
     const request = mode === 'today'
       ? ensureTodaySession(academyClass).then((selected) => ({ list: [selected], selected }))
       : getClassSessions(academyClass.id).then((list) => ({ list, selected: nearestSession(list) }))
@@ -136,9 +132,9 @@ export function AttendancePage({ data, isAdmin, onRegisterStudent }: { branchId:
       if (!active || requestId !== sessionRequest.current) return
       setSessions(list)
       setSession(selected)
-      if (!selected) { setRecords([]); setCoachRecords([]); return }
-      const [nextRecords, nextCoaches] = await Promise.all([getAttendance(selected.id), getCoachAttendance(selected.id)])
-      if (active && requestId === sessionRequest.current) { setRecords(nextRecords); setCoachRecords(nextCoaches) }
+      if (!selected) { setRecords([]); return }
+      const nextRecords = await getAttendance(selected.id)
+      if (active && requestId === sessionRequest.current) setRecords(nextRecords)
     }).catch((error) => { if (active && requestId === sessionRequest.current) setLoadError(errorMessage(error)) }).finally(() => { if (active && requestId === sessionRequest.current) setLoading(false) })
     return () => { active = false }
   }, [academyClass, mode, reloadRequest, screen])
@@ -152,7 +148,6 @@ export function AttendancePage({ data, isAdmin, onRegisterStudent }: { branchId:
     setSession(null)
     setSessions([])
     setRecords([])
-    setCoachRecords([])
     setSearch('')
     setLevel('All')
     setScreen('detail')
@@ -182,15 +177,11 @@ export function AttendancePage({ data, isAdmin, onRegisterStudent }: { branchId:
     const requestId = ++sessionRequest.current
     setSession(next)
     setRecords([])
-    setCoachRecords([])
     setLoadError('')
     setLoading(true)
     try {
-      const [nextRecords, nextCoaches] = await Promise.all([getAttendance(next.id), getCoachAttendance(next.id)])
-      if (requestId === sessionRequest.current) {
-        setRecords(nextRecords)
-        setCoachRecords(nextCoaches)
-      }
+      const nextRecords = await getAttendance(next.id)
+      if (requestId === sessionRequest.current) setRecords(nextRecords)
     } catch (error) {
       if (requestId === sessionRequest.current) setLoadError(errorMessage(error))
     } finally {
@@ -306,33 +297,6 @@ export function AttendancePage({ data, isAdmin, onRegisterStudent }: { branchId:
     }
   }
 
-  async function addCoach() {
-    if (!session || !coachId || coachPending) return
-    setCoachPending(true)
-    try {
-      await addCoachAttendance(session.id, Number(coachId))
-      setCoachRecords(await getCoachAttendance(session.id))
-      setCoachId(null)
-    } catch (error) {
-      notifications.show({ color: 'red', message: errorMessage(error) })
-    } finally {
-      setCoachPending(false)
-    }
-  }
-
-  async function deletePresentCoach(nextCoachId: number) {
-    if (!session || coachPending) return
-    setCoachPending(true)
-    try {
-      await removeCoachAttendance(session.id, nextCoachId)
-      setCoachRecords((current) => current.filter((item) => item.coach_id !== nextCoachId))
-    } catch (error) {
-      notifications.show({ color: 'red', message: errorMessage(error) })
-    } finally {
-      setCoachPending(false)
-    }
-  }
-
   if (screen === 'hub') {
     return <AttendanceHub data={data} todayClasses={todayClasses} isAdmin={isAdmin} onToday={(item) => openClass(item, 'today')} onHistory={(item) => openClass(item, 'history')} />
   }
@@ -351,12 +315,6 @@ export function AttendancePage({ data, isAdmin, onRegisterStudent }: { branchId:
           <Paper className="attendance-summary-card present" p="lg" radius="lg"><Text className="attendance-summary-value">{present.length}</Text><Text size="xs" c="dimmed">Total present</Text><Group justify="center" gap="xs" mt="xs"><Text size="xs">Regular <b>{countedAttendance}</b></Text><Text size="xs" c="orange">Trial <b>{trialCount}</b></Text></Group><Group aria-label="Present students by level" justify="center" gap={6} mt="xs">{presentLevels.map((studentLevel) => <Badge key={studentLevel} size="sm" color="green" variant="light">{studentLevel} {presentByLevel[studentLevel] || 0}</Badge>)}</Group></Paper>
           <Paper className="attendance-summary-card" p="lg" radius="lg"><Text className="attendance-summary-value">{notMarked}</Text><Text size="xs" c="dimmed">Not marked</Text></Paper>
         </SimpleGrid>
-
-        <Box>
-          <Text className="attendance-section-label">Coaches present</Text>
-          {coachRecords.length ? <Group gap="xs" mb="sm">{coachRecords.map((item) => <Badge key={item.id} size="lg" variant="light" rightSection={<ActionIcon aria-label="Remove coach" variant="transparent" color="gray" size="xs" disabled={coachPending} onClick={() => deletePresentCoach(item.coach_id)}><IconTrash size={12} /></ActionIcon>}>{data.coaches.find((coach) => coach.id === item.coach_id)?.name || 'Coach'} · {item.hours}h</Badge>)}</Group> : <Text size="sm" c="dimmed" mb="sm">None marked yet</Text>}
-          <Group wrap="nowrap"><Select aria-label="Coach to add" placeholder="-- Add coach --" value={coachId} onChange={setCoachId} data={data.coaches.filter((coach) => !coachRecords.some((item) => item.coach_id === coach.id)).map((coach) => ({ value: String(coach.id), label: coach.name }))} flex={1} /><Button variant="light" onClick={addCoach} loading={coachPending} disabled={!coachId || coachPending}>Add</Button></Group>
-        </Box>
 
         <Group className="attendance-tools" wrap="wrap"><TextInput aria-label="Search enrolled students" leftSection={<IconSearch size={16} />} placeholder="Search students" value={search} onChange={(event) => setSearch(event.currentTarget.value)} flex={1} /><Select aria-label="Filter enrolled students by level" value={level} onChange={setLevel} data={['All', 'Beginner', 'Intermediate', 'Advanced']} w={150} /><Button leftSection={<IconCheck size={16} />} variant="light" onClick={markAll} loading={bulkPending} disabled={mutationPending}>All present</Button></Group>
 

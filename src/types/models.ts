@@ -48,6 +48,7 @@ export interface Coach {
   phone: string
   coach_type: CoachType
   hourly_rate: number
+  petrol_day_rate: number
   status: 'Active' | 'Inactive'
   photo_path: string | null
 }
@@ -131,6 +132,31 @@ export interface CoachPayment {
   students_count: number
   date_paid: string
   remarks: string
+}
+
+export interface CoachPayrollMonth {
+  id: number
+  pay_month: string
+  custom_column_1_label: string
+  custom_column_2_label: string
+}
+
+export interface CoachPayrollEntry {
+  id: number
+  payroll_month_id: number
+  work_date: string
+  coach_id: number
+  branch_id: number
+  hours: number
+  hourly_rate: number
+  petrol_day_rate: number
+  custom_amount_1: number
+  custom_amount_2: number
+  salary_amount: number
+  total_amount: number
+  remarks: string
+  coach?: Pick<Coach, 'id' | 'name'>
+  branch?: Pick<Branch, 'id' | 'name'>
 }
 
 export interface HeadCoachRate {

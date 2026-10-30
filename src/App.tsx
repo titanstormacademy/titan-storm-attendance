@@ -358,7 +358,7 @@ function renderPage(page: PageKey, props: PageProps) {
     case 'attendance': return <AttendancePage branchId={props.branchId} data={props.data} isAdmin={props.isAdmin} onRegisterStudent={props.registerStudentFromAttendance} />
     case 'students': return <StudentsPage branchId={props.branchId} data={props.data} isAdmin={props.isAdmin} createRequest={props.studentCreateRequest} onCreateHandled={props.onStudentCreateHandled} onChanged={props.onChanged} />
     case 'classes': return <ClassesPage branchId={props.branchId} data={props.data} onChanged={props.onChanged} />
-    case 'coaches': return <CoachesPage branchId={props.branchId} data={props.data} onChanged={props.onChanged} />
+    case 'coaches': return <CoachesPage branchId={props.branchId} branches={props.branches} data={props.data} onChanged={props.onChanged} />
     case 'reports': return <ReportsPage branchId={props.branchId} data={props.data} onChanged={props.onChanged} />
     case 'settings': return <SettingsPage branches={props.branches} settings={props.settings} onChanged={props.refreshAll} />
     default: return <DashboardPage data={props.data} branchName={props.branchName} isAdmin={props.isAdmin} />
