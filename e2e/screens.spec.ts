@@ -37,8 +37,13 @@ async function respond(route: Route, body: unknown, status = 200) {
   await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body), headers: { 'access-control-allow-origin': '*' } })
 }
 
-async function mockAdminBackend(page: Page, options: { failBootstrap?: boolean; failReport?: boolean; failSettings?: boolean; secondClass?: boolean } = {}) {
+async function mockAdminBackend(page: Page, options: { failBootstrap?: boolean; failReport?: boolean; failSettings?: boolean; secondClass?: boolean; pastEnrollment?: boolean } = {}) {
   const data = fixtureData()
+  if (options.pastEnrollment) {
+    const now = new Date()
+    const day = (offset: number) => { const value = new Date(now.getFullYear(), now.getMonth(), now.getDate() - offset); return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}` }
+    data.enrollments.push({ id: 603, branch_id: 1, student_id: 201, class_id: 402, start_date: day(10), end_date: day(9) })
+  }
   if (options.secondClass) {
     data.students.push({ ...data.students[1], id: 203, name: 'Casey Saturday', status: 'Active' })
     Object.assign(data.classes[1], { short_label: 'LAB' })
@@ -89,6 +94,15 @@ async function mockAdminBackend(page: Page, options: { failBootstrap?: boolean; 
     if (url.pathname === '/rest/v1/head_coach_rates') return options.failSettings ? respond(route, { message: 'Settings unavailable' }, 500) : respond(route, [{ id: 901, min_students: 1, max_students: 49, min_fee: 0, max_fee: 99999, payout: 30 }])
     if (url.pathname === '/rest/v1/branch_memberships') return respond(route, [])
     if (url.pathname === '/rest/v1/coach_payments') return respond(route, [])
+    if (url.pathname === '/rest/v1/rpc/remove_enrollment') {
+      const input = request.postDataJSON() as { p_enrollment_id: number }
+      data.enrollments = data.enrollments.filter((item) => item.id !== input.p_enrollment_id)
+      return respond(route, null)
+    }
+    if (url.pathname === '/rest/v1/rpc/save_student_with_enrollments') {
+      const input = request.postDataJSON() as { p_student: { id: number } }
+      return respond(route, data.students.find((item) => item.id === input.p_student.id))
+    }
     if (url.pathname === '/rest/v1/rpc/set_attendance_trial') {
       const input = request.postDataJSON() as { p_student_id: number; p_is_trial: boolean }
       const record = data.attendance.find((item) => item.student_id === input.p_student_id)!
@@ -103,7 +117,7 @@ async function mockAdminBackend(page: Page, options: { failBootstrap?: boolean; 
   })
 }
 
-async function loginAdmin(page: Page, options: { failBootstrap?: boolean; failReport?: boolean; failSettings?: boolean; secondClass?: boolean } = {}) {
+async function loginAdmin(page: Page, options: { failBootstrap?: boolean; failReport?: boolean; failSettings?: boolean; secondClass?: boolean; pastEnrollment?: boolean } = {}) {
   await mockAdminBackend(page, options)
   await page.goto('/')
   await page.getByLabel('Your name').fill('UX Admin')
@@ -346,6 +360,41 @@ test('report ledger student opens the student details dialog', async ({ page, is
   await expect(page.getByRole('tab', { name: 'Summary' })).toHaveAttribute('aria-selected', 'true')
   await page.getByRole('button', { name: 'Close' }).click()
   await expect(page.getByRole('dialog', { name: 'Avery Basketball Student With A Long Name' })).toHaveCount(0)
+})
+
+test('an enrollment added by mistake can be removed instead of withdrawn', async ({ page, isMobile }) => {
+  await loginAdmin(page)
+  await navigate(page, Boolean(isMobile), 'Students', 'Students')
+  await page.getByRole('button', { name: /Avery Basketball Student/ }).click()
+  await page.getByRole('tab', { name: 'Profile' }).click()
+  await page.getByRole('checkbox', { name: /Elite Development Training/ }).uncheck()
+  await expect(page.getByLabel('Final enrolled date')).toBeVisible()
+  await page.getByRole('radiogroup', { name: /How to remove Elite Development Training/ }).getByText('Added by mistake').click()
+  await expect(page.getByLabel('Final enrolled date')).toHaveCount(0)
+  await expect(page.getByText('This enrollment will be deleted when you save')).toBeVisible()
+  let confirmation = ''
+  page.once('dialog', (dialog) => { confirmation = dialog.message(); void dialog.accept() })
+  const removeRequest = page.waitForRequest((request) => request.url().includes('/rpc/remove_enrollment'))
+  const saveRequest = page.waitForRequest((request) => request.url().includes('/rpc/save_student_with_enrollments'))
+  await page.getByRole('button', { name: 'Save student' }).click()
+  expect((await removeRequest).postDataJSON()).toEqual({ p_enrollment_id: 601 })
+  expect((await saveRequest).postDataJSON()).toMatchObject({ p_enrollments: [], p_withdrawals: [] })
+  expect(confirmation).toContain('Elite Development Training With Long Name')
+  expect(confirmation).toContain('1 attendance record will be kept as walk-in')
+})
+
+test('past enrollments added by mistake can be removed from the student profile', async ({ page, isMobile }) => {
+  await loginAdmin(page, { pastEnrollment: true })
+  await navigate(page, Boolean(isMobile), 'Students', 'Students')
+  await page.getByRole('button', { name: /Avery Basketball Student/ }).click()
+  await page.getByRole('tab', { name: 'Profile' }).click()
+  await expect(page.getByText('Past enrollments')).toBeVisible()
+  page.once('dialog', (dialog) => void dialog.accept())
+  const removeRequest = page.waitForRequest((request) => request.url().includes('/rpc/remove_enrollment'))
+  await page.getByRole('button', { name: 'Remove past enrollment Skills Lab' }).click()
+  expect((await removeRequest).postDataJSON()).toEqual({ p_enrollment_id: 603 })
+  await expect(page.getByText('Enrollment removed')).toBeVisible()
+  await expect(page.getByText('Past enrollments')).toHaveCount(0)
 })
 
 test('returning to the browser tab keeps the current screen state', async ({ page, isMobile }) => {

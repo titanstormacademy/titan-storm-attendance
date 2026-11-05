@@ -4,12 +4,12 @@ import { ActionIcon, Alert, Badge, Box, Button, Checkbox, Divider, FileButton, G
 import { useDisclosure } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
 import { IconAlertCircle, IconCalendarCheck, IconCamera, IconCash, IconMessageCircle, IconPlus, IconSearch, IconTrash, IconUserOff, IconUsers } from '@tabler/icons-react'
-import { deleteStudent, recordStudentPayment, removeReceiptIfUnreferenced, removeUploadedImage, saveStudent, saveStudentWithEnrollments, uploadImage } from '../lib/api'
+import { deleteStudent, recordStudentPayment, removeEnrollment, removeReceiptIfUnreferenced, removeUploadedImage, saveStudent, saveStudentWithEnrollments, uploadImage } from '../lib/api'
 import { getStudentAttendance, type StudentAttendanceEntry } from '../lib/studentOperations'
 import { publicImageUrl } from '../lib/supabase'
 import { EmptyState, PageHeader, PersonAvatar, PhotoLightbox, ResponsiveModal } from '../components/ui'
 import { useNavigationGuard } from '../contexts/useNavigationGuard'
-import type { BootstrapData, Payment, PaymentMethod, PaymentStatus, Student } from '../types/models'
+import type { BootstrapData, Enrollment, Payment, PaymentMethod, PaymentStatus, Student } from '../types/models'
 
 const blankStudent: Partial<Student> & { name: string } = {
   name: '', nric: '', gender: '', date_of_birth: null, age: null, height: '', school: '', tshirt_size: '', student_phone: '', parent_name: '', parent_contact: '', email: '', father_height: '', mother_height: '', monthly_fee: null, level: '', status: 'Active',
@@ -29,6 +29,8 @@ export function StudentsPage({ branchId, data, isAdmin, createRequest = 0, onCre
   const [classIds, setClassIds] = useState<string[]>([])
   const [enrollmentDates, setEnrollmentDates] = useState<Record<string, string>>({})
   const [withdrawalDates, setWithdrawalDates] = useState<Record<string, string>>({})
+  const [removeClassIds, setRemoveClassIds] = useState<string[]>([])
+  const [removingEnrollmentId, setRemovingEnrollmentId] = useState<number | null>(null)
   const [attendance, setAttendance] = useState<StudentAttendanceEntry[]>([])
   const [attendanceLoading, setAttendanceLoading] = useState(false)
   const [attendanceError, setAttendanceError] = useState('')
@@ -48,7 +50,7 @@ export function StudentsPage({ branchId, data, isAdmin, createRequest = 0, onCre
   const profileRequest = useRef(0)
   const lastDialogRequest = useRef(0)
   const submitLock = useRef(false)
-  const currentSnapshot = studentSnapshot(form, classIds, enrollmentDates, withdrawalDates)
+  const currentSnapshot = studentSnapshot(form, classIds, enrollmentDates, withdrawalDates, removeClassIds)
   const dirty = opened && (Boolean(photo) || currentSnapshot !== baseline)
   const { confirmDiscard } = useNavigationGuard('student-editor', { dirty, pending: saving })
 
@@ -68,6 +70,7 @@ export function StudentsPage({ branchId, data, isAdmin, createRequest = 0, onCre
     setClassIds([])
     setEnrollmentDates({})
     setWithdrawalDates({})
+    setRemoveClassIds([])
     setAttendance([])
     setAttendanceError('')
     setActiveTab('profile')
@@ -101,6 +104,7 @@ export function StudentsPage({ branchId, data, isAdmin, createRequest = 0, onCre
     setClassIds(nextClassIds)
     setEnrollmentDates(nextDates)
     setWithdrawalDates({})
+    setRemoveClassIds([])
     setAttendance([])
     setAttendanceError('')
     setAttendanceLoading(Boolean(student))
@@ -139,6 +143,7 @@ export function StudentsPage({ branchId, data, isAdmin, createRequest = 0, onCre
     setClassIds(nextClassIds)
     setEnrollmentDates(nextDates)
     setWithdrawalDates({})
+    setRemoveClassIds([])
     setAttendance([])
     setAttendanceError('')
     setAttendanceLoading(true)
@@ -178,6 +183,7 @@ export function StudentsPage({ branchId, data, isAdmin, createRequest = 0, onCre
       setClassIds((current) => current.includes(classId) ? current : [...current, classId])
       setEnrollmentDates((current) => ({ ...current, [classId]: current[classId] || dayjs().format('YYYY-MM-DD') }))
       setWithdrawalDates((current) => { const next = { ...current }; delete next[classId]; return next })
+      setRemoveClassIds((current) => current.filter((id) => id !== classId))
     } else {
       setClassIds((current) => current.filter((id) => id !== classId))
       const activeEnrollment = form.id && data.enrollments.find((item) => item.student_id === form.id && String(item.class_id) === classId && !item.end_date)
@@ -195,14 +201,16 @@ export function StudentsPage({ branchId, data, isAdmin, createRequest = 0, onCre
       notifications.show({ color: 'red', message: 'Choose a start date for every selected class.' })
       return
     }
-    if (Object.values(withdrawalDates).some((date) => !date)) {
+    if (Object.entries(withdrawalDates).some(([id, date]) => !date && !removeClassIds.includes(id))) {
       notifications.show({ color: 'red', message: 'Choose the final enrolled date for every removed class.' })
       return
     }
+    const removals = removeClassIds.map((id) => data.enrollments.find((item) => item.student_id === form.id && String(item.class_id) === id && !item.end_date)).filter((item): item is Enrollment => Boolean(item))
+    if (removals.length && !window.confirm(removalConfirmation(removals))) return
     submitLock.current = true
     const requestId = profileRequest.current
     const enrollments = classIds.map((id) => ({ class_id: Number(id), start_date: enrollmentDates[id] }))
-    const withdrawals = Object.entries(withdrawalDates).map(([id, end_date]) => ({ class_id: Number(id), end_date }))
+    const withdrawals = Object.entries(withdrawalDates).filter(([id]) => !removeClassIds.includes(id)).map(([id, end_date]) => ({ class_id: Number(id), end_date }))
     let uploadedPhotoPath: string | null = null
     setSaving(true)
     try {
@@ -213,6 +221,7 @@ export function StudentsPage({ branchId, data, isAdmin, createRequest = 0, onCre
       }
       let saved: Student
       try {
+        for (const removal of removals) await removeEnrollment(removal.id)
         saved = await saveStudentWithEnrollments(branchId, payload, enrollments, withdrawals)
       } catch (error) {
         if (uploadedPhotoPath) await removeUploadedImage('student-photos', uploadedPhotoPath).catch(() => undefined)
@@ -231,6 +240,7 @@ export function StudentsPage({ branchId, data, isAdmin, createRequest = 0, onCre
       notifications.show({ color: 'green', title: 'Student saved', message: `${saved.name}'s profile and classes are up to date.` })
       if (requestId === profileRequest.current) {
         setBaseline(studentSnapshot(saved, classIds, enrollmentDates, {}))
+        setRemoveClassIds([])
         setPhoto(null)
         close()
         onDialogClose?.()
@@ -241,6 +251,33 @@ export function StudentsPage({ branchId, data, isAdmin, createRequest = 0, onCre
     } finally {
       submitLock.current = false
       if (requestId === profileRequest.current) setSaving(false)
+    }
+  }
+
+  function enrollmentAttendanceCount(enrollment: Enrollment) {
+    return attendance.filter((entry) => entry.class?.id === enrollment.class_id && entry.attendance_date >= enrollment.start_date && (!enrollment.end_date || entry.attendance_date <= enrollment.end_date)).length
+  }
+
+  function removalConfirmation(enrollments: Enrollment[]) {
+    const lines = enrollments.map((enrollment) => {
+      const count = enrollmentAttendanceCount(enrollment)
+      const label = data.classes.find((item) => item.id === enrollment.class_id)?.label || 'Class'
+      return `• ${label} (from ${dayjs(enrollment.start_date).format('D MMM YYYY')})${count ? ` – ${count} attendance record${count === 1 ? '' : 's'} will be kept as walk-in${count === 1 ? '' : 's'}` : ''}`
+    })
+    return `Remove ${enrollments.length === 1 ? 'this enrollment' : 'these enrollments'} as added by mistake? This deletes the enrollment history and cannot be undone.\n\n${lines.join('\n')}`
+  }
+
+  async function removePastEnrollment(enrollment: Enrollment) {
+    if (!window.confirm(removalConfirmation([enrollment]))) return
+    setRemovingEnrollmentId(enrollment.id)
+    try {
+      await removeEnrollment(enrollment.id)
+      notifications.show({ color: 'green', message: 'Enrollment removed' })
+      try { await onChanged() } catch (error) { notifications.show({ color: 'orange', title: 'Enrollment removed, refresh failed', message: errorMessage(error) }) }
+    } catch (error) {
+      notifications.show({ color: 'red', title: 'Could not remove enrollment', message: errorMessage(error) })
+    } finally {
+      setRemovingEnrollmentId(null)
     }
   }
 
@@ -263,6 +300,7 @@ export function StudentsPage({ branchId, data, isAdmin, createRequest = 0, onCre
   const student = form.id ? data.students.find((item) => item.id === form.id) || form as Student : null
   const studentEnrollments = student ? data.enrollments.filter((item) => item.student_id === student.id) : []
   const studentPayments = student ? data.payments.filter((item) => item.student_id === student.id) : []
+  const pastEnrollments = studentEnrollments.filter((item) => item.end_date).sort((a, b) => b.start_date.localeCompare(a.start_date))
   const due = student ? calculateDue(student, studentEnrollments, studentPayments) : { months: [], amount: 0 }
   const paymentOptions = paymentMonthOptions(studentEnrollments, studentPayments)
   const period = reportPeriod(reportPreset)
@@ -365,8 +403,9 @@ export function StudentsPage({ branchId, data, isAdmin, createRequest = 0, onCre
             <Grid.Col span={{ base: 6, xs: 2 }}><TextInput label="T-shirt" value={form.tshirt_size || ''} disabled={!isAdmin} onChange={(event) => setForm({ ...form, tshirt_size: event.currentTarget.value })} /></Grid.Col>
           </Grid><Divider my="lg" /><Stack gap="sm"><Text fw={700}>Class enrollment</Text><Text size="sm" c="dimmed">Select each class and set the date this student started.</Text>{data.classes.length ? data.classes.map((item) => {
             const id = String(item.id); const checked = classIds.includes(id)
-            return <Paper key={item.id} className={`student-enrollment-row ${checked ? 'selected' : ''}`} p="md" radius="md" withBorder><Checkbox checked={checked} disabled={!isAdmin || saving} onChange={(event) => toggleClass(id, event.currentTarget.checked)} label={<Box><Text fw={700} size="sm">{item.label}</Text><Text size="xs" c="dimmed">{item.day_of_week} · {item.start_time?.slice(0, 5) || 'Time TBC'}</Text></Box>} />{checked && <TextInput mt="sm" label="Start date" type="date" value={enrollmentDates[id] || ''} disabled={!isAdmin || saving} onChange={(event) => setEnrollmentDates((current) => ({ ...current, [id]: event.currentTarget.value }))} required />}{!checked && withdrawalDates[id] != null && <TextInput mt="sm" label="Final enrolled date" description="Attendance through this date remains part of the enrollment history." type="date" value={withdrawalDates[id]} disabled={!isAdmin || saving} min={enrollmentDates[id]} max={dayjs().format('YYYY-MM-DD')} onChange={(event) => setWithdrawalDates((current) => ({ ...current, [id]: event.currentTarget.value }))} required />}</Paper>
-          }) : <Text c="dimmed">No classes are configured for this branch.</Text>}</Stack></Tabs.Panel>
+            return <Paper key={item.id} className={`student-enrollment-row ${checked ? 'selected' : ''}`} p="md" radius="md" withBorder><Checkbox checked={checked} disabled={!isAdmin || saving} onChange={(event) => toggleClass(id, event.currentTarget.checked)} label={<Box><Text fw={700} size="sm">{item.label}</Text><Text size="xs" c="dimmed">{item.day_of_week} · {item.start_time?.slice(0, 5) || 'Time TBC'}</Text></Box>} />{checked && <TextInput mt="sm" label="Start date" type="date" value={enrollmentDates[id] || ''} disabled={!isAdmin || saving} onChange={(event) => setEnrollmentDates((current) => ({ ...current, [id]: event.currentTarget.value }))} required />}{!checked && withdrawalDates[id] != null && <Stack gap="xs" mt="sm"><SegmentedControl size="xs" fullWidth aria-label={`How to remove ${item.label}`} value={removeClassIds.includes(id) ? 'remove' : 'withdraw'} disabled={!isAdmin || saving} onChange={(value) => setRemoveClassIds((current) => value === 'remove' ? [...current.filter((entry) => entry !== id), id] : current.filter((entry) => entry !== id))} data={[{ value: 'withdraw', label: 'Withdraw' }, { value: 'remove', label: 'Added by mistake' }]} />{removeClassIds.includes(id) ? <Text size="xs" c="red">This enrollment will be deleted when you save, so it no longer appears in reports or fee totals.</Text> : <TextInput label="Final enrolled date" description="Attendance through this date remains part of the enrollment history." type="date" value={withdrawalDates[id]} disabled={!isAdmin || saving} min={enrollmentDates[id]} max={dayjs().format('YYYY-MM-DD')} onChange={(event) => setWithdrawalDates((current) => ({ ...current, [id]: event.currentTarget.value }))} required />}</Stack>}</Paper>
+          }) : <Text c="dimmed">No classes are configured for this branch.</Text>}
+          {pastEnrollments.length > 0 && <Box mt="xs"><Text fw={700} size="sm">Past enrollments</Text><Text size="xs" c="dimmed">Withdrawn classes are kept as history. Remove any that were added by mistake.</Text><Stack gap={6} mt="xs">{pastEnrollments.map((enrollment) => <Paper key={enrollment.id} className="student-past-enrollment" p="xs" radius="md" withBorder><Group justify="space-between" wrap="nowrap"><Box miw={0}><Text size="sm" fw={600} truncate>{data.classes.find((item) => item.id === enrollment.class_id)?.label || 'Class'}</Text><Text size="xs" c="dimmed">{dayjs(enrollment.start_date).format('D MMM YYYY')} – {dayjs(enrollment.end_date).format('D MMM YYYY')}</Text></Box>{isAdmin && <Button size="xs" variant="subtle" color="red" aria-label={`Remove past enrollment ${data.classes.find((item) => item.id === enrollment.class_id)?.label || 'class'}`} loading={removingEnrollmentId === enrollment.id} disabled={saving || (removingEnrollmentId != null && removingEnrollmentId !== enrollment.id)} onClick={() => removePastEnrollment(enrollment)}>Remove</Button>}</Group></Paper>)}</Stack></Box>}</Stack></Tabs.Panel>
         </Tabs>
         {isAdmin && activeTab === 'profile' ? <Group className="modal-actions" justify="space-between"><Button variant="subtle" color="red" disabled={!form.id || saving} onClick={() => form.id && remove(form as Student)} leftSection={<IconTrash size={16} />}>Delete</Button><Group><Button variant="default" disabled={saving} onClick={guardedClose}>Cancel</Button><Button loading={saving} onClick={submit}>Save student</Button></Group></Group> : <Group className="modal-actions" justify="flex-end"><Button variant="default" onClick={guardedClose}>Close</Button></Group>}
       </Stack>
@@ -503,6 +542,6 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'Something went wrong'
 }
 
-function studentSnapshot(form: Partial<Student> & { name: string }, classIds: string[], enrollmentDates: Record<string, string>, withdrawalDates: Record<string, string>) {
-  return JSON.stringify({ form, classIds: [...classIds].sort(), enrollmentDates, withdrawalDates })
+function studentSnapshot(form: Partial<Student> & { name: string }, classIds: string[], enrollmentDates: Record<string, string>, withdrawalDates: Record<string, string>, removeClassIds: string[] = []) {
+  return JSON.stringify({ form, classIds: [...classIds].sort(), enrollmentDates, withdrawalDates, removeClassIds: [...removeClassIds].sort() })
 }

@@ -160,6 +160,10 @@ export async function saveEnrollment(studentId: number, classId: number, startDa
   return unwrap(await supabase.from('enrollments').upsert({ student_id: studentId, class_id: classId, start_date: startDate }).select().single()) as Enrollment
 }
 
+export async function removeEnrollment(enrollmentId: number) {
+  unwrap(await supabase.rpc('remove_enrollment', { p_enrollment_id: enrollmentId }))
+}
+
 export async function deleteEnrollment(studentId: number, classId: number) {
   unwrap(await supabase.from('enrollments').delete().eq('student_id', studentId).eq('class_id', classId))
 }
