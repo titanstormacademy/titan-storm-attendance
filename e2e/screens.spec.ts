@@ -269,6 +269,26 @@ test('report ledger month opens payment and note panel', async ({ page, isMobile
   await expectNoHorizontalOverflow(page)
 })
 
+test('report ledger student opens the student details dialog', async ({ page, isMobile }) => {
+  await loginAdmin(page)
+  await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
+  await page.getByRole('button', { name: 'Open Avery Basketball Student With A Long Name details' }).click()
+  await expect(page.getByRole('dialog', { name: 'Avery Basketball Student With A Long Name' })).toBeVisible()
+  await expect(page.getByRole('tab', { name: 'Summary' })).toHaveAttribute('aria-selected', 'true')
+  await page.getByRole('button', { name: 'Close' }).click()
+  await expect(page.getByRole('dialog', { name: 'Avery Basketball Student With A Long Name' })).toHaveCount(0)
+})
+
+test('refreshing keeps administrators on admin-only pages', async ({ page, isMobile }) => {
+  await loginAdmin(page)
+  for (const screen of [{ label: 'Reports', heading: 'Reports' }, { label: 'Classes & sessions', heading: 'Classes' }]) {
+    await navigate(page, Boolean(isMobile), screen.label, screen.heading)
+    await page.reload()
+    await expect(page.getByRole('heading', { name: screen.heading, exact: true })).toBeVisible()
+    await expect(page).toHaveURL(new RegExp(`page=${screen.label === 'Reports' ? 'reports' : 'classes'}`))
+  }
+})
+
 test('bootstrap failures show a retry action instead of an endless skeleton', async ({ page }) => {
   await loginAdmin(page, { failBootstrap: true })
   await expect(page.getByText('Could not load academy data')).toBeVisible()

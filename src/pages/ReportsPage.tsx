@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ComponentPropsWithRef } from 'react'
 import dayjs from 'dayjs'
-import { Alert, Badge, Box, Button, Collapse, Group, NumberInput, Paper, Popover, Select, SimpleGrid, Skeleton, Stack, Table, Text, TextInput, Textarea } from '@mantine/core'
+import { Alert, Badge, Box, Button, Collapse, Group, NumberInput, Paper, Popover, Select, SimpleGrid, Skeleton, Stack, Table, Text, TextInput, Textarea, UnstyledButton } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
 import { IconCheck, IconClipboard, IconNote, IconPlus, IconSearch, IconUsers } from '@tabler/icons-react'
@@ -8,6 +8,7 @@ import { getReportLedger, recordStudentPayment, saveMonthRemark } from '../lib/a
 import { findDuplicateReference } from '../lib/paymentOperations'
 import { publicImageUrl } from '../lib/supabase'
 import { EmptyState, PageHeader, PersonAvatar, ResponsiveModal } from '../components/ui'
+import { StudentsPage } from './StudentsPage'
 import type { AcademyClass, BootstrapData, Enrollment, Payment, PaymentMethod, PaymentStatus, Student } from '../types/models'
 
 type Ledger = Awaited<ReturnType<typeof getReportLedger>>
@@ -31,6 +32,8 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
   const [search, setSearch] = useState('')
   const [classFilter, setClassFilter] = useState<string | null>(null)
   const [active, setActive] = useState<{ studentId: number; month: string } | null>(null)
+  const [detailStudent, setDetailStudent] = useState<Student | null>(null)
+  const [detailRequest, setDetailRequest] = useState(0)
   const isMobile = useMediaQuery('(max-width: 62em)')
   const currentMonth = dayjs().format('YYYY-MM')
   const monthKeys = useMemo(() => Array.from({ length: 12 }, (_, index) => `${year}-${String(index + 1).padStart(2, '0')}`), [year])
@@ -95,6 +98,12 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
   const activeRow = active ? rows.find((row) => row.student.id === active.studentId) : undefined
   const activeCell = activeRow?.months.find((cell) => cell.month === active?.month)
 
+  function openStudent(student: Student) {
+    setActive(null)
+    setDetailStudent(student)
+    setDetailRequest((current) => current + 1)
+  }
+
   function open(studentId: number, month: string) {
     setActive((current) => current?.studentId === studentId && current.month === month ? null : { studentId, month })
   }
@@ -139,7 +148,7 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
       {loadError ? <Box p="lg" pt={0}><Alert color="red" title="Could not load ledger">{loadError}<Button mt="md" size="xs" onClick={() => setReloadRequest((current) => current + 1)}>Retry</Button></Alert></Box>
         : !ledger ? <Stack p="lg" pt={0} gap="xs" role="status" aria-label="Loading ledger">{Array.from({ length: 6 }, (_, index) => <Skeleton key={index} height={44} radius="sm" />)}</Stack>
           : !visibleRows.length ? <Box p="lg" pt={0}><EmptyState title="No students to show" message={rows.length ? 'No student matches this search or class filter.' : `No enrolled students for ${year}.`} icon={IconUsers} /></Box>
-            : isMobile ? <Stack p="md" pt={0} gap="sm">{visibleRows.map((row) => <LedgerCard key={row.student.id} row={row} currentMonth={currentMonth} onOpen={(month) => open(row.student.id, month)} />)}</Stack>
+            : isMobile ? <Stack p="md" pt={0} gap="sm">{visibleRows.map((row) => <LedgerCard key={row.student.id} row={row} currentMonth={currentMonth} onOpen={(month) => open(row.student.id, month)} onOpenStudent={() => openStudent(row.student)} />)}</Stack>
               : <Box className="ledger-scroll">
                 <Table className="ledger-table">
                   <Table.Thead><Table.Tr>
@@ -152,7 +161,7 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
                   <Table.Tbody>{visibleRows.map((row, index) => <Table.Tr key={row.student.id} className={row.student.status === 'Active' ? undefined : 'is-inactive'}>
                     <Table.Td className="ledger-sticky ledger-col-no">{index + 1}</Table.Td>
                     <Table.Td className="ledger-sticky ledger-col-class"><ClassChip label={row.classLabel} /></Table.Td>
-                    <Table.Td className="ledger-sticky ledger-col-student"><StudentLabel row={row} /></Table.Td>
+                    <Table.Td className="ledger-sticky ledger-col-student"><StudentLabel row={row} onOpen={() => openStudent(row.student)} /></Table.Td>
                     <Table.Td className="ledger-sticky ledger-col-attendance"><AttendanceTotal row={row} /></Table.Td>
                     {row.months.map((cell) => {
                       const opened = active?.studentId === row.student.id && active.month === cell.month
@@ -169,6 +178,7 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
     </Paper>
 
     {isMobile && <ResponsiveModal opened={Boolean(panel)} onClose={() => setActive(null)} title="Month details">{panel}</ResponsiveModal>}
+    <StudentsPage branchId={branchId} data={data} isAdmin dialogOnly dialogStudent={detailStudent} dialogRequest={detailRequest} onDialogClose={() => setDetailStudent(null)} onChanged={onChanged} />
   </>
 }
 
@@ -181,10 +191,10 @@ function MonthButton({ row, cell, currentMonth, opened, onClick, compact, ...res
   </button>
 }
 
-function LedgerCard({ row, currentMonth, onOpen }: { row: LedgerRow; currentMonth: string; onOpen: (month: string) => void }) {
+function LedgerCard({ row, currentMonth, onOpen, onOpenStudent }: { row: LedgerRow; currentMonth: string; onOpen: (month: string) => void; onOpenStudent: () => void }) {
   return <Paper p="md" radius="md" withBorder className={row.student.status === 'Active' ? 'ledger-mobile-card' : 'ledger-mobile-card is-inactive'}>
     <Group justify="space-between" align="flex-start" wrap="nowrap">
-      <StudentLabel row={row} />
+      <StudentLabel row={row} onOpen={onOpenStudent} />
       <AttendanceTotal row={row} />
     </Group>
     <Box mt="xs"><ClassChip label={row.classLabel} /></Box>
@@ -192,14 +202,16 @@ function LedgerCard({ row, currentMonth, onOpen }: { row: LedgerRow; currentMont
   </Paper>
 }
 
-function StudentLabel({ row }: { row: LedgerRow }) {
-  return <Group gap="sm" wrap="nowrap" miw={0}>
-    <PersonAvatar name={row.student.name} src={publicImageUrl('student-photos', row.student.photo_path)} size={34} />
-    <Box miw={0}>
-      <Text fw={700} size="sm" truncate="end">{row.student.name}</Text>
-      <Text size="xs" c="dimmed">{row.student.status === 'Active' ? row.age != null ? `Age ${row.age}` : 'Age not set' : 'Inactive'}</Text>
-    </Box>
-  </Group>
+function StudentLabel({ row, onOpen }: { row: LedgerRow; onOpen: () => void }) {
+  return <UnstyledButton className="ledger-student-button" aria-label={`Open ${row.student.name} details`} onClick={onOpen}>
+    <Group gap="sm" wrap="nowrap" miw={0}>
+      <PersonAvatar name={row.student.name} src={publicImageUrl('student-photos', row.student.photo_path)} size={34} />
+      <Box miw={0}>
+        <Text fw={700} size="sm" truncate="end" className="ledger-student-name">{row.student.name}</Text>
+        <Text size="xs" c="dimmed">{row.student.status === 'Active' ? row.age != null ? `Age ${row.age}` : 'Age not set' : 'Inactive'}</Text>
+      </Box>
+    </Group>
+  </UnstyledButton>
 }
 
 function AttendanceTotal({ row }: { row: LedgerRow }) {

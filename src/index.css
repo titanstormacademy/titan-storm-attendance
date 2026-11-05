@@ -1995,3 +1995,21 @@ select {
 }
 
 [data-mantine-color-scheme='dark'] .ledger-class-chip { filter: saturate(0.9) brightness(0.92); }
+
+.ledger-student-button {
+  display: block;
+  max-width: 100%;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.ledger-student-button:hover .ledger-student-name {
+  color: #d4531f;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ledger-student-button:focus-visible {
+  outline: 2px solid #f26522;
+  outline-offset: 2px;
+}

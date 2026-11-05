@@ -141,12 +141,12 @@ export default function App() {
   }, [activeBranches, branchId, confirmLeave, navbar, navbarOpened])
 
   useEffect(() => {
-    if (isAdmin || !navigation.find((item) => item.key === page)?.admin) return
+    if (!profile || isAdmin || !navigation.find((item) => item.key === page)?.admin) return
     if (branchId) rememberScrollPosition(page, branchId)
     pageRef.current = 'dashboard'
     setPage('dashboard')
     window.history.replaceState({ titanPage: 'dashboard', titanBranchId: branchId, titanScrollY: branchId ? storedScrollPosition('dashboard', branchId) : 0 }, '', pageUrl('dashboard'))
-  }, [branchId, isAdmin, page])
+  }, [branchId, isAdmin, page, profile])
 
   const dataQuery = useQuery({
     queryKey: ['bootstrap', branchId, isAdmin],
