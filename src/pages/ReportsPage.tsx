@@ -23,6 +23,11 @@ const statusLabels: Record<CellStatus, string> = { paid: 'Paid', partial: 'Parti
 const legend: CellStatus[] = ['paid', 'partial', 'unpaid', 'outstanding', 'not-enrolled']
 type ReportPeriod = '3' | '6' | '12' | 'year'
 const periodOptions = [{ value: '3', label: '3 months' }, { value: '6', label: '6 months' }, { value: '12', label: '12 months' }, { value: 'year', label: 'Full year' }]
+const popoverMiddlewares = {
+  flip: { fallbackPlacements: ['top', 'left', 'right'] as Array<'top' | 'left' | 'right'>, fallbackStrategy: 'bestFit' as const, padding: 12 },
+  shift: { padding: 12 },
+  size: { padding: 12, apply: ({ availableHeight, elements }: { availableHeight: number; elements: { floating: HTMLElement } }) => { elements.floating.style.maxHeight = `${Math.max(240, Math.min(availableHeight, 640))}px` } },
+}
 const chipTones = ['amber', 'pink', 'violet', 'blue', 'green', 'orange', 'slate']
 
 export function ReportsPage({ branchId, data, onChanged }: { branchId: number; data: BootstrapData; onChanged: () => Promise<unknown> }) {
@@ -176,7 +181,7 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
                     {row.months.map((cell) => {
                       const opened = active?.studentId === row.student.id && active.month === cell.month
                       return <Table.Td key={cell.month} className={cell.month === currentMonth ? 'ledger-month-cell is-current' : 'ledger-month-cell'}>
-                        <Popover opened={opened} onChange={(next) => { if (!next) setActive(null) }} width={360} position="bottom" withArrow shadow="lg" trapFocus>
+                        <Popover opened={opened} onChange={(next) => { if (!next) setActive(null) }} width={360} position="bottom" withArrow shadow="lg" trapFocus middlewares={popoverMiddlewares}>
                           <Popover.Target><MonthButton row={row} cell={cell} currentMonth={currentMonth} opened={opened} onClick={() => open(row.student.id, cell.month)} /></Popover.Target>
                           <Popover.Dropdown className="ledger-popover">{opened && panel}</Popover.Dropdown>
                         </Popover>

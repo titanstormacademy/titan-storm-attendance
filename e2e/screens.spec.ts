@@ -284,6 +284,26 @@ test('report ledger period filter shows rolling month ranges', async ({ page, is
   await expectNoHorizontalOverflow(page)
 })
 
+test('report ledger payment popover stays inside short desktop viewports', async ({ page, isMobile }) => {
+  test.skip(Boolean(isMobile), 'Desktop popover placement')
+  await page.setViewportSize({ width: 1536, height: 655 })
+  await loginAdmin(page)
+  await navigate(page, false, 'Reports', 'Reports')
+  await page.getByRole('textbox', { name: 'Report period' }).click()
+  await page.getByRole('option', { name: '3 months', exact: true }).click()
+  const previousMonth = new Intl.DateTimeFormat('en-US', { month: 'long' }).format(new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1))
+  await page.getByRole('button', { name: new RegExp(`^Avery Basketball Student With A Long Name, ${previousMonth}:`) }).click()
+  const popover = page.locator('.ledger-popover')
+  await expect(popover).toBeVisible()
+  const box = (await popover.boundingBox())!
+  expect(box.y).toBeGreaterThanOrEqual(0)
+  expect(box.y + box.height).toBeLessThanOrEqual(655)
+  const save = popover.getByRole('button', { name: 'Save payment' })
+  await save.scrollIntoViewIfNeeded()
+  const saveBox = (await save.boundingBox())!
+  expect(saveBox.y + saveBox.height).toBeLessThanOrEqual(655)
+})
+
 test('report ledger student opens the student details dialog', async ({ page, isMobile }) => {
   await loginAdmin(page)
   await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
