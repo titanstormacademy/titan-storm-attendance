@@ -2015,7 +2015,49 @@ select {
 }
 
 .ledger-table tbody tr.ledger-summary-row td {
+  padding-top: 3px;
+  padding-bottom: 3px;
   background: var(--ledger-head-bg);
+}
+
+.ledger-table tbody tr.ledger-summary-row td.ledger-col-class,
+.ledger-table tbody tr.ledger-summary-row td.ledger-col-student,
+.ledger-table tbody tr.ledger-summary-row td.ledger-col-attendance {
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+
+.ledger-summary-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  color: #d4531f;
+  font-size: 0.72rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.ledger-summary-toggle:hover {
+  background: color-mix(in srgb, #f26522 10%, transparent);
+}
+
+.ledger-summary-toggle:focus-visible {
+  outline: 2px solid #f26522;
+  outline-offset: 1px;
+}
+
+.ledger-summary-toggle svg {
+  transition: transform 0.2s ease;
+}
+
+.ledger-summary-toggle svg.expanded {
+  transform: rotate(180deg);
+}
+
+[data-mantine-color-scheme='dark'] .ledger-summary-toggle {
+  color: #ffb58d;
 }
 
 .ledger-table tbody tr.ledger-summary-row.is-last td {
@@ -2028,7 +2070,7 @@ select {
 
 .ledger-summary-cell {
   display: flex;
-  min-height: 30px;
+  min-height: 26px;
   align-items: center;
   justify-content: center;
   border-radius: 6px;
@@ -2052,7 +2094,7 @@ select {
 }
 
 .ledger-summary-cell-compact {
-  min-height: 42px;
+  min-height: 36px;
   flex-direction: column;
 }
 

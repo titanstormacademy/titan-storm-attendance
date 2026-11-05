@@ -37,8 +37,13 @@ async function respond(route: Route, body: unknown, status = 200) {
   await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body), headers: { 'access-control-allow-origin': '*' } })
 }
 
-async function mockAdminBackend(page: Page, options: { failBootstrap?: boolean; failReport?: boolean; failSettings?: boolean } = {}) {
+async function mockAdminBackend(page: Page, options: { failBootstrap?: boolean; failReport?: boolean; failSettings?: boolean; secondClass?: boolean } = {}) {
   const data = fixtureData()
+  if (options.secondClass) {
+    data.students.push({ ...data.students[1], id: 203, name: 'Casey Saturday', status: 'Active' })
+    Object.assign(data.classes[1], { short_label: 'LAB' })
+    data.enrollments.push({ id: 602, branch_id: 1, student_id: 203, class_id: 402, start_date: data.enrollments[0].start_date, end_date: null })
+  }
   let admin = false
   await page.route('http://127.0.0.1:54321/**', async (route) => {
     const request = route.request()
@@ -98,7 +103,7 @@ async function mockAdminBackend(page: Page, options: { failBootstrap?: boolean; 
   })
 }
 
-async function loginAdmin(page: Page, options: { failBootstrap?: boolean; failReport?: boolean; failSettings?: boolean } = {}) {
+async function loginAdmin(page: Page, options: { failBootstrap?: boolean; failReport?: boolean; failSettings?: boolean; secondClass?: boolean } = {}) {
   await mockAdminBackend(page, options)
   await page.goto('/')
   await page.getByLabel('Your name').fill('UX Admin')
@@ -317,6 +322,19 @@ test('report ledger summarises paid students per class each month', async ({ pag
     await expect(page.locator(`.ledger-summary-cell[title^="${classShortLabel}, ${previousLabel}:"]`)).toHaveText(/0\/1$/)
   }
   await expect(page.locator('.ledger-summary-cell[title^="All classes"]')).toHaveCount(0)
+  await expectNoHorizontalOverflow(page)
+})
+
+test('report ledger shows one total row and expands per-class rows on demand', async ({ page, isMobile }) => {
+  const monthLabel = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(new Date())
+  await loginAdmin(page, { secondClass: true })
+  await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
+  await expect(page.locator(`.ledger-summary-cell[title^="All classes, ${monthLabel}:"]`)).toHaveText(/1\/2$/)
+  await expect(page.locator(`.ledger-summary-cell[title^="LAB, ${monthLabel}:"]`)).toHaveCount(0)
+  await page.getByRole('button', { name: 'By class (2)' }).click()
+  await expect(page.locator(`.ledger-summary-cell[title^="LAB, ${monthLabel}:"]`)).toHaveText(/0\/1$/)
+  await page.getByRole('button', { name: 'Hide classes' }).click()
+  await expect(page.locator(`.ledger-summary-cell[title^="LAB, ${monthLabel}:"]`)).toHaveCount(0)
   await expectNoHorizontalOverflow(page)
 })
 
