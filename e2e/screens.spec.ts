@@ -76,6 +76,10 @@ async function mockAdminBackend(page: Page, options: { failBootstrap?: boolean; 
       }
       return respond(route, data.attendance)
     }
+    if (url.pathname === '/rest/v1/student_month_remarks') {
+      if (request.method() === 'POST') return respond(route, { id: 1001, branch_id: 1, ...request.postDataJSON() })
+      return options.failReport ? respond(route, { message: 'Ledger unavailable' }, 500) : respond(route, [])
+    }
     if (url.pathname === '/rest/v1/coach_attendance') return respond(route, data.coachAttendance)
     if (url.pathname === '/rest/v1/head_coach_rates') return options.failSettings ? respond(route, { message: 'Settings unavailable' }, 500) : respond(route, [{ id: 901, min_students: 1, max_students: 49, min_fee: 0, max_fee: 99999, payout: 30 }])
     if (url.pathname === '/rest/v1/branch_memberships') return respond(route, [])
@@ -114,13 +118,18 @@ async function navigate(page: Page, isMobile: boolean, label: string, heading: s
   await expect(page.getByRole('heading', { name: heading })).toBeVisible()
 }
 
+function currentMonthCell(page: Page) {
+  const monthName = new Intl.DateTimeFormat('en-US', { month: 'long' }).format(new Date())
+  return page.getByRole('button', { name: new RegExp(`^Avery Basketball Student With A Long Name, ${monthName}:`) })
+}
+
 async function expectNoHorizontalOverflow(page: Page) {
   const overflowing = await page.evaluate(() => {
     const root = document.querySelector('.app-main') || document.body
     const bounds = root.getBoundingClientRect()
     return [...root.querySelectorAll('*')].filter((element) => {
       const style = getComputedStyle(element)
-      if (!element.checkVisibility() || style.position === 'fixed' || style.position === 'absolute' || element.closest('[class*="mantine-TableScrollContainer"]') || element.closest('[class*="mantine-Grid"]')) return false
+      if (!element.checkVisibility() || style.position === 'fixed' || style.position === 'absolute' || element.closest('[class*="mantine-TableScrollContainer"]') || element.closest('.ledger-scroll') || element.closest('[class*="mantine-Grid"]')) return false
       const rect = element.getBoundingClientRect()
       return rect.left < bounds.left - 2 || rect.right > bounds.right + 2
     }).map((element) => ({ tag: element.tagName, className: element.className, text: element.textContent?.slice(0, 60) }))
@@ -170,35 +179,6 @@ test('student summary shows attendance, payment status, and the simplified payme
   await expect(page.getByRole('textbox', { name: 'Payment method' })).toHaveValue('Bank Transfer')
 })
 
-test('payment student rows open the shared student summary without replacing payment actions', async ({ page, isMobile }) => {
-  await loginAdmin(page)
-  await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
-  await expect(page.getByText('Payments', { exact: true })).toHaveCount(0)
-  await expect(page.locator('.stat-card').filter({ hasText: 'Students attended' })).toContainText('1 / 1')
-  await expect(page.locator('.stat-card').filter({ hasText: 'Meeting target' })).toContainText('1 / 1')
-  await expect(page.locator('.stat-card').filter({ hasText: 'Fully paid' })).toContainText('1 / 1')
-  const search = page.getByLabel('Search payment students by name')
-  await search.fill('blake')
-  await expect(page.getByText('No students match this name.')).toBeVisible()
-  await search.fill('avery')
-  await expect(page.getByText('1 student', { exact: true })).toBeVisible()
-  const mobileCard = page.locator('.payment-student-card').filter({ hasText: 'Avery Basketball Student' })
-  const studentSurface = await mobileCard.isVisible() ? mobileCard : page.getByRole('row').filter({ hasText: 'Avery Basketball Student' })
-  const feeInput = studentSurface.getByLabel('Monthly fee for Avery Basketball Student With A Long Name')
-  await feeInput.fill('175')
-  await feeInput.press('Enter')
-  await expect(page.getByText("Avery Basketball Student With A Long Name's monthly fee updated.")).toBeVisible()
-  await expect(feeInput).toHaveValue('175')
-  await expect(page.getByRole('dialog', { name: 'Avery Basketball Student With A Long Name' })).toHaveCount(0)
-  await studentSurface.getByText('Avery Basketball Student With A Long Name', { exact: true }).click()
-  await expect(page.getByRole('dialog', { name: 'Avery Basketball Student With A Long Name' })).toBeVisible()
-  await expect(page.getByRole('tab', { name: 'Summary' })).toHaveAttribute('aria-selected', 'true')
-  await expect(page.getByText('1 / 4')).toBeVisible()
-  await page.getByRole('button', { name: 'Close' }).click()
-  await studentSurface.getByRole('button', { name: 'History' }).click()
-  await expect(page.getByRole('dialog', { name: /payment history/ })).toBeVisible()
-})
-
 test('trial attendance is tagged and excluded from counted report sessions', async ({ page, isMobile }) => {
   await loginAdmin(page)
   await navigate(page, Boolean(isMobile), 'Attendance', 'Attendance')
@@ -224,11 +204,8 @@ test('trial attendance is tagged and excluded from counted report sessions', asy
   await markTrial.click()
   await expect(trialToggle).toHaveText('Trial session ✓')
   await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
-  await page.getByText('Attendance grid', { exact: true }).click()
-  const trialStudent = page.getByRole('button', { name: /Blake Trial/ })
-  await expect(trialStudent).toContainText('1')
-  await trialStudent.click()
-  await expect(page.getByText('Trial', { exact: true }).last()).toBeVisible()
+  await expect(currentMonthCell(page)).toHaveAccessibleName(/Paid, attended 1 of 1$/)
+  await expect(page.getByText('Blake Trial')).toHaveCount(0)
 })
 
 test('reopening restores the active attendance detail', async ({ page, isMobile }) => {
@@ -263,94 +240,33 @@ test('student photo lightbox stays contained on phone screens', async ({ page, i
   expect(bounds.imageBottom).toBeLessThanOrEqual(bounds.bottom)
 })
 
-test('reports can be filtered by student name', async ({ page, isMobile }) => {
+test('report ledger can be filtered by student name and class', async ({ page, isMobile }) => {
+  const classShortLabel = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(new Date()).slice(0, 3)
   await loginAdmin(page)
   await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
-  await page.getByText('Attendance grid', { exact: true }).click()
-  await expect(page.getByRole('button', { name: /Avery Basketball Student/ })).toBeVisible()
-  await expect(page.getByRole('button', { name: /Blake Trial/ })).toBeVisible()
-  await page.getByLabel('Search report students').fill('blake')
-  await expect(page.getByRole('button', { name: /Blake Trial/ })).toBeVisible()
-  await expect(page.getByRole('button', { name: /Avery Basketball Student/ })).toHaveCount(0)
-  await expect(page.getByText('1 of 2 students')).toBeVisible()
-  await page.getByLabel('Search report students').fill('')
-  await page.getByLabel('Filter report students by class').click()
-  await page.getByRole('option', { name: 'Skills Lab' }).click()
-  await expect(page.getByRole('button', { name: /Avery Basketball Student/ }).locator('.report-total')).toHaveText('1')
-  await expect(page.getByRole('button', { name: /Blake Trial/ })).toHaveCount(0)
+  await expect(currentMonthCell(page)).toBeVisible()
+  await expect(page.getByText('1 student', { exact: true })).toBeVisible()
+  await page.getByLabel('Search ledger students by name').fill('blake')
+  await expect(page.getByText('No student matches this search or class filter.')).toBeVisible()
+  await page.getByLabel('Search ledger students by name').fill('')
+  await page.getByRole('textbox', { name: 'Filter ledger by class' }).click()
+  await page.getByRole('option', { name: classShortLabel, exact: true }).click()
+  await expect(currentMonthCell(page)).toBeVisible()
+  await expect(page.locator('.ledger-class-chip').first()).toHaveText(classShortLabel)
 })
 
-test('filtered attendance grid can be exported to Excel', async ({ page, isMobile }) => {
+test('report ledger month opens payment and note panel', async ({ page, isMobile }) => {
   await loginAdmin(page)
   await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
-  await page.getByText('Attendance grid', { exact: true }).click()
-  await page.getByLabel('Search report students').fill('blake')
-  await page.getByText('Grid', { exact: true }).click()
-  const downloadPromise = page.waitForEvent('download')
-  await page.getByRole('button', { name: 'Export grid to Excel' }).click()
-  const download = await downloadPromise
-  expect(download.suggestedFilename()).toMatch(/^attendance-grid-\d{4}-\d{2}\.xls$/)
-  const stream = await download.createReadStream()
-  const chunks: Buffer[] = []
-  for await (const chunk of stream) chunks.push(Buffer.from(chunk))
-  const workbook = Buffer.concat(chunks).toString('utf8')
-  expect(await page.evaluate((xml) => new DOMParser().parseFromString(xml, 'application/xml').querySelectorAll('parsererror').length, workbook)).toBe(0)
-  expect(workbook).toContain('Blake Trial')
-  expect(workbook).not.toContain('Avery Basketball Student')
-  expect(workbook).toContain('Student filter')
-  expect(workbook).toContain('✓ Present · T Trial · * Walk-in')
-  expect(workbook).toContain('<Data ss:Type="String">T1*</Data>')
-  expect(workbook).toContain('ss:StyleID="TrialMark"')
-  expect(workbook).toContain('<Column ss:Width="62"/>')
-  expect(workbook).toContain('<SplitVertical>3</SplitVertical>')
+  await currentMonthCell(page).click()
+  await expect(page.getByText('1 of 1 classes attended')).toBeVisible()
+  await expect(page.getByText('UX-001', { exact: false })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Add another payment' })).toBeVisible()
+  await page.getByLabel('Month note').fill('Replacement class next week')
+  await page.getByRole('button', { name: 'Save note' }).click()
+  await expect(page.getByText('Note saved')).toBeVisible()
+  await expect(currentMonthCell(page)).toHaveAccessibleName(/has note$/)
   await expectNoHorizontalOverflow(page)
-})
-
-test('receipt images are compressed before OCR upload', async ({ page, isMobile, browserName }) => {
-  test.skip(isMobile && browserName !== 'webkit', 'Receipt compression runs in Chromium and mobile WebKit')
-  await loginAdmin(page)
-  await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
-  await page.getByRole('button', { name: 'Record payment' }).click()
-  const dataUrl = await page.evaluate(() => {
-    const canvas = document.createElement('canvas')
-    canvas.width = 1200
-    canvas.height = 1200
-    const context = canvas.getContext('2d')!
-    const image = context.createImageData(canvas.width, canvas.height)
-    let state = 123456789
-    for (let index = 0; index < image.data.length; index += 4) {
-      state = (state * 1664525 + 1013904223) >>> 0
-      image.data[index] = state & 255
-      image.data[index + 1] = (state >>> 8) & 255
-      image.data[index + 2] = (state >>> 16) & 255
-      image.data[index + 3] = (state >>> 24) & 255
-    }
-    context.putImageData(image, 0, 0)
-    return canvas.toDataURL('image/png')
-  })
-  const source = Buffer.from(dataUrl.split(',')[1], 'base64')
-  const requestPromise = page.waitForRequest((request) => request.url().includes('/functions/v1/receipt-ocr'))
-  await page.locator('input[type="file"]').setInputFiles({ name: 'large-receipt.png', mimeType: 'image/png', buffer: source })
-  const request = await requestPromise
-  const uploaded = request.postDataBuffer()!
-  const contentStart = uploaded.indexOf(Buffer.from('\r\n\r\n')) + 4
-  const contentEnd = uploaded.lastIndexOf(Buffer.from('\r\n--'))
-  expect(uploaded.includes(Buffer.from('image/webp'))).toBe(true)
-  expect(contentEnd - contentStart).toBeLessThanOrEqual(400_000)
-})
-
-test('reports combine attendance from multiple selected months', async ({ page, isMobile }) => {
-  const now = new Date()
-  const comparisonMonth = (now.getMonth() + 6) % 12
-  const comparisonMonthLabel = new Intl.DateTimeFormat('en-US', { month: 'long' }).format(new Date(now.getFullYear(), comparisonMonth, 1))
-  await loginAdmin(page)
-  await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
-  await page.getByText('Attendance grid', { exact: true }).click()
-  const student = page.getByRole('button', { name: /Avery Basketball Student/ })
-  await expect(student.locator('.report-total')).toHaveText('2')
-  await page.getByLabel('Filter report by months').click()
-  await page.getByRole('option', { name: comparisonMonthLabel, exact: true }).click()
-  await expect(student.locator('.report-total')).toHaveText('3')
 })
 
 test('bootstrap failures show a retry action instead of an endless skeleton', async ({ page }) => {
@@ -362,8 +278,8 @@ test('bootstrap failures show a retry action instead of an endless skeleton', as
 test('report and settings failures remain visible with retry actions', async ({ page, isMobile }) => {
   await loginAdmin(page, { failReport: true, failSettings: true })
   await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
-  await page.getByText('Attendance grid', { exact: true }).click()
-  await expect(page.getByText('Could not load report')).toBeVisible()
+  await expect(page.getByText('Could not load ledger')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Copy' })).toBeDisabled()
   await navigate(page, Boolean(isMobile), 'Settings', 'Settings')
   await expect(page.getByText('Could not load access and commission settings')).toBeVisible()
@@ -404,9 +320,9 @@ test('primary interaction on every admin screen is reachable', async ({ page, is
   await page.getByRole('button', { name: 'Cancel' }).click()
 
   await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
-  await page.getByRole('button', { name: 'Record payment' }).click()
-  await expect(page.getByRole('dialog')).toBeVisible()
-  await page.getByRole('button', { name: 'Cancel' }).click()
+  await currentMonthCell(page).click()
+  await expect(page.getByRole('button', { name: 'Save note' })).toBeVisible()
+  await page.keyboard.press('Escape')
 
   await navigate(page, Boolean(isMobile), 'Coaches', 'Coaches')
   await page.getByRole('button', { name: 'Add coach' }).click()
@@ -414,7 +330,6 @@ test('primary interaction on every admin screen is reachable', async ({ page, is
   await page.getByRole('button', { name: 'Cancel' }).click()
 
   await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
-  await page.getByText('Attendance grid', { exact: true }).click()
   await expect(page.getByRole('button', { name: 'Copy' })).toBeVisible()
 
   await navigate(page, Boolean(isMobile), 'Settings', 'Settings')

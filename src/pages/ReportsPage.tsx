@@ -1,220 +1,344 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ComponentPropsWithRef } from 'react'
 import dayjs from 'dayjs'
-import { Alert, Badge, Box, Button, Grid, Group, MultiSelect, Paper, SegmentedControl, Select, Stack, Table, Text, TextInput } from '@mantine/core'
+import { Alert, Badge, Box, Button, Collapse, Group, NumberInput, Paper, Popover, Select, SimpleGrid, Skeleton, Stack, Table, Text, TextInput, Textarea } from '@mantine/core'
+import { useMediaQuery } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
-import { IconCheck, IconChevronDown, IconClipboard, IconFileSpreadsheet, IconSearch } from '@tabler/icons-react'
-import { getAttendanceReport } from '../lib/api'
-import { PageHeader, PageLoader } from '../components/ui'
-import { PaymentsPage } from './PaymentsPage'
-import type { AcademyClass, Attendance, BootstrapData, Student } from '../types/models'
+import { IconCheck, IconClipboard, IconNote, IconPlus, IconSearch, IconUsers } from '@tabler/icons-react'
+import { getReportLedger, recordStudentPayment, saveMonthRemark } from '../lib/api'
+import { findDuplicateReference } from '../lib/paymentOperations'
+import { publicImageUrl } from '../lib/supabase'
+import { EmptyState, PageHeader, PersonAvatar, ResponsiveModal } from '../components/ui'
+import type { AcademyClass, BootstrapData, Enrollment, Payment, PaymentMethod, PaymentStatus, Student } from '../types/models'
 
-type ReportRecord = Attendance & { student: Pick<Student, 'id' | 'name' | 'status' | 'gender' | 'level'>; class: Pick<AcademyClass, 'id' | 'label'> }
-type ExcelValue = string | number | { value: string; style: string }
-type ReportDateEntry = { classId: number; className: string; walkIn: boolean; trial: boolean }
-type ReportRow = {
-  id: number
-  name: string
-  level: string
-  age: number | null
-  total: number
-  trialCount: number
-  enrolledClasses: Array<{ id: number; label: string }>
-  classes: Map<number, { label: string; dates: Array<{ date: string; trial: boolean }>; walkIns: number; trials: number }>
-  dates: Map<string, ReportDateEntry[]>
-}
+type Ledger = Awaited<ReturnType<typeof getReportLedger>>
+type CellStatus = 'paid' | 'partial' | 'unpaid' | 'outstanding' | 'not-enrolled' | 'not-due'
+type MonthCell = { month: string; status: CellStatus; attended: number; scheduled: number; dates: string[]; payments: Payment[]; remark: string }
+type LedgerRow = { student: Student; classLabel: string; dayOrder: number; age: number | null; attended: number; scheduled: number; months: MonthCell[] }
 
-const classColors = ['#ef3340', '#3b82f6', '#22c55e', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#64748b']
-const calendarMonths = Array.from({ length: 12 }, (_, index) => String(index + 1).padStart(2, '0'))
-const monthOptions = [{ value: 'All', label: 'All months' }, ...calendarMonths.map((month) => ({ value: month, label: dayjs(`2026-${month}-01`).format('MMMM') }))]
+const methods: PaymentMethod[] = ['Cash', 'Bank Transfer', "Touch 'n Go eWallet", 'Online', 'Others']
+const statuses: PaymentStatus[] = ['Paid', 'Partial', 'Unpaid']
+const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+const statusLabels: Record<CellStatus, string> = { paid: 'Paid', partial: 'Partial', unpaid: 'Unpaid', outstanding: 'Outstanding', 'not-enrolled': 'Not enrolled', 'not-due': 'Not due' }
+const legend: CellStatus[] = ['paid', 'partial', 'unpaid', 'outstanding', 'not-enrolled']
+const chipTones = ['amber', 'pink', 'violet', 'blue', 'green', 'orange', 'slate']
 
 export function ReportsPage({ branchId, data, onChanged }: { branchId: number; data: BootstrapData; onChanged: () => Promise<unknown> }) {
-  const [section, setSection] = useState<'overview' | 'attendance'>('overview')
-  if (section === 'overview') return <PaymentsPage branchId={branchId} data={data} onChanged={onChanged} reportMode onOpenAttendanceGrid={() => setSection('attendance')} />
-  return <AttendanceReport branchId={branchId} data={data} onOpenOverview={() => setSection('overview')} />
-}
-
-function AttendanceReport({ branchId, data, onOpenOverview }: { branchId: number; data: BootstrapData; onOpenOverview: () => void }) {
   const [year, setYear] = useState(dayjs().format('YYYY'))
-  const [months, setMonths] = useState([dayjs().format('MM')])
-  const [view, setView] = useState<'summary' | 'grid'>('summary')
-  const [search, setSearch] = useState('')
-  const [classFilter, setClassFilter] = useState<string | null>('All')
-  const [expandedRows, setExpandedRows] = useState<Set<number>>(() => new Set())
-  const [records, setRecords] = useState<ReportRecord[]>([])
+  const [ledger, setLedger] = useState<Ledger | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [reloadRequest, setReloadRequest] = useState(0)
-
-  const period = useMemo(() => {
-    const selectedMonths = months.includes('All') ? calendarMonths : [...months].sort()
-    const ranges = selectedMonths.map((month) => {
-      const start = dayjs(`${year}-${month}-01`)
-      return { start: start.format('YYYY-MM-DD'), end: start.endOf('month').format('YYYY-MM-DD') }
-    })
-    const label = months.includes('All') ? year : `${selectedMonths.map((month) => dayjs(`${year}-${month}-01`).format('MMMM')).join(', ')} ${year}`
-    return { start: ranges[0].start, end: ranges.at(-1)!.end, label, months: selectedMonths, ranges }
-  }, [months, year])
-
-  useEffect(() => {
-    let active = true
-    setLoading(true)
-    setLoadError('')
-    setRecords([])
-    setExpandedRows(new Set())
-    getAttendanceReport(branchId, period.start, period.end)
-      .then((next) => { if (active) setRecords(next) })
-      .catch((error) => { if (active) setLoadError(error instanceof Error ? error.message : 'Could not load report') })
-      .finally(() => { if (active) setLoading(false) })
-    return () => { active = false }
-  }, [branchId, period.end, period.start, reloadRequest])
-
-  const selectedClassId = classFilter === 'All' ? null : Number(classFilter)
-  const reportRecords = useMemo(() => records.filter((record) => period.months.includes(record.attendance_date.slice(5, 7)) && (selectedClassId == null || record.class_id === selectedClassId)), [period.months, records, selectedClassId])
-
-  const rows = useMemo(() => {
-    const byStudent = new Map<number, ReportRow>()
-    data.students.filter((student) => student.status === 'Active' && data.enrollments.some((entry) => entry.student_id === student.id && (selectedClassId == null || entry.class_id === selectedClassId) && period.ranges.some((range) => entry.start_date <= range.end && (!entry.end_date || entry.end_date >= range.start)))).forEach((student) => {
-      const enrolledClasses = [...new Map(data.enrollments.filter((entry) => entry.student_id === student.id && (selectedClassId == null || entry.class_id === selectedClassId) && period.ranges.some((range) => entry.start_date <= range.end && (!entry.end_date || entry.end_date >= range.start))).map((entry) => data.classes.find((item) => item.id === entry.class_id)).filter((item): item is AcademyClass => Boolean(item)).map((item) => [item.id, { id: item.id, label: item.label }])).values()]
-      byStudent.set(student.id, { id: student.id, name: student.name, level: student.level, age: student.date_of_birth ? dayjs().diff(dayjs(student.date_of_birth), 'year') : null, total: 0, trialCount: 0, enrolledClasses, classes: new Map(), dates: new Map() })
-    })
-    reportRecords.forEach((record) => {
-      const student = data.students.find((item) => item.id === record.student_id)
-      const row = byStudent.get(record.student_id) || { id: record.student_id, name: record.student.name, level: record.student.level, age: student?.date_of_birth ? dayjs().diff(dayjs(student.date_of_birth), 'year') : null, total: 0, trialCount: 0, enrolledClasses: [], classes: new Map(), dates: new Map() }
-      const walkIn = !data.enrollments.some((entry) => entry.student_id === record.student_id && entry.class_id === record.class_id && entry.start_date <= record.attendance_date && (!entry.end_date || entry.end_date >= record.attendance_date))
-      const trial = walkIn && Boolean(record.is_trial)
-      const classEntry = row.classes.get(record.class_id) || { label: record.class.label, dates: [], walkIns: 0, trials: 0 }
-      classEntry.dates.push({ date: record.attendance_date, trial })
-      if (walkIn) classEntry.walkIns += 1
-      if (trial) classEntry.trials += 1
-      row.classes.set(record.class_id, classEntry)
-      row.dates.set(record.attendance_date, [...(row.dates.get(record.attendance_date) || []), { classId: record.class_id, className: record.class.label, walkIn, trial }])
-      if (trial) row.trialCount += 1
-      else row.total += 1
-      byStudent.set(record.student_id, row)
-    })
-    return [...byStudent.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name))
-  }, [data.classes, data.enrollments, data.students, period.ranges, reportRecords, selectedClassId])
-
-  const filteredRows = useMemo(() => {
-    const needle = search.trim().toLowerCase()
-    return rows.filter((row) => !needle || row.name.toLowerCase().includes(needle))
-  }, [rows, search])
-
-  const dates = useMemo(() => [...new Set([...data.sessions.filter((item) => period.months.includes(item.session_date.slice(5, 7)) && item.session_date.startsWith(year) && (selectedClassId == null || item.class_id === selectedClassId)).map((item) => item.session_date), ...reportRecords.map((item) => item.attendance_date)])].sort(), [data.sessions, period.months, reportRecords, selectedClassId, year])
-  const classesInReport = useMemo(() => [...new Map(reportRecords.map((record) => [record.class_id, record.class.label])).entries()], [reportRecords])
-  const colorFor = (classId: number) => classColors[Math.abs(classId) % classColors.length]
+  const [search, setSearch] = useState('')
+  const [classFilter, setClassFilter] = useState<string | null>(null)
+  const [active, setActive] = useState<{ studentId: number; month: string } | null>(null)
+  const isMobile = useMediaQuery('(max-width: 62em)')
+  const currentMonth = dayjs().format('YYYY-MM')
+  const monthKeys = useMemo(() => Array.from({ length: 12 }, (_, index) => `${year}-${String(index + 1).padStart(2, '0')}`), [year])
   const years = Array.from({ length: 8 }, (_, index) => String(dayjs().year() - index))
 
-  function changeMonths(values: string[]) {
-    if (!values.length) return
-    if (values.includes('All') && !months.includes('All')) setMonths(['All'])
-    else setMonths(values.filter((value) => value !== 'All'))
+  useEffect(() => {
+    let alive = true
+    setLoading(true)
+    setLoadError('')
+    getReportLedger(branchId, year)
+      .then((next) => { if (alive) setLedger(next) })
+      .catch((error) => { if (alive) { setLedger(null); setLoadError(errorMessage(error)) } })
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [branchId, reloadRequest, year])
+
+  const rows = useMemo(() => {
+    if (!ledger) return []
+    const yearStart = `${year}-01-01`
+    const yearEnd = `${year}-12-31`
+    const classById = new Map(data.classes.map((item) => [item.id, item]))
+    const sessionDates = new Map<number, string[]>()
+    ledger.sessions.forEach((session) => sessionDates.set(session.class_id, [...(sessionDates.get(session.class_id) || []), session.session_date]))
+    const attendanceByStudent = new Map<number, Ledger['attendance']>()
+    ledger.attendance.filter((record) => !record.is_trial).forEach((record) => attendanceByStudent.set(record.student_id, [...(attendanceByStudent.get(record.student_id) || []), record]))
+    const remarks = new Map(ledger.remarks.map((item) => [`${item.student_id}:${item.month.slice(0, 7)}`, item.remark]))
+    const yearPayments = data.payments.filter((payment) => payment.fee_month.startsWith(year))
+
+    return data.students.flatMap((student): LedgerRow[] => {
+      const enrollments = data.enrollments.filter((entry) => entry.student_id === student.id)
+      const yearEnrollments = enrollments.filter((entry) => entry.start_date <= yearEnd && (!entry.end_date || entry.end_date >= yearStart))
+      const attendance = attendanceByStudent.get(student.id) || []
+      const payments = yearPayments.filter((payment) => payment.student_id === student.id)
+      const include = student.status === 'Active' ? yearEnrollments.length > 0 : student.status === 'Inactive' && (yearEnrollments.length > 0 || attendance.length > 0 || payments.length > 0)
+      if (!include) return []
+
+      const covering = (classId: number, date: string) => enrollments.some((entry) => entry.class_id === classId && entry.start_date <= date && (!entry.end_date || entry.end_date >= date))
+      const classes = [...new Map(yearEnrollments.map((entry) => [entry.class_id, classById.get(entry.class_id)])).values()].filter((item): item is AcademyClass => Boolean(item)).sort((a, b) => days.indexOf(a.day_of_week) - days.indexOf(b.day_of_week) || a.label.localeCompare(b.label))
+      const classIds = new Set(enrollments.map((entry) => entry.class_id))
+      const months = monthKeys.map((month): MonthCell => {
+        const scheduled = [...classIds].reduce((sum, classId) => sum + (sessionDates.get(classId) || []).filter((date) => date.startsWith(month) && covering(classId, date)).length, 0)
+        const dates = attendance.filter((record) => record.attendance_date.startsWith(month) && covering(record.class_id, record.attendance_date)).map((record) => record.attendance_date).sort()
+        const monthPayments = payments.filter((payment) => payment.fee_month.startsWith(month))
+        return { month, status: cellStatus(student, enrollments, monthPayments, month, currentMonth), attended: dates.length, scheduled, dates, payments: monthPayments, remark: remarks.get(`${student.id}:${month}`) || '' }
+      })
+      const counted = months.filter((cell) => cell.month <= currentMonth)
+      return [{
+        student,
+        classLabel: classes.map((item) => item.short_label?.trim() || item.day_of_week.slice(0, 3)).join(' & ') || '—',
+        dayOrder: classes.length ? days.indexOf(classes[0].day_of_week) * 10 + classes.length : 99,
+        age: student.date_of_birth ? dayjs().diff(dayjs(student.date_of_birth), 'year') : student.age ?? null,
+        attended: counted.reduce((sum, cell) => sum + cell.attended, 0),
+        scheduled: counted.reduce((sum, cell) => sum + cell.scheduled, 0),
+        months,
+      }]
+    }).sort((a, b) => a.dayOrder - b.dayOrder || a.classLabel.localeCompare(b.classLabel) || a.student.name.localeCompare(b.student.name))
+  }, [currentMonth, data.classes, data.enrollments, data.payments, data.students, ledger, monthKeys, year])
+
+  const classOptions = useMemo(() => [...new Set(rows.map((row) => row.classLabel))], [rows])
+  const needle = search.trim().toLowerCase()
+  const visibleRows = rows.filter((row) => (!classFilter || row.classLabel === classFilter) && (!needle || row.student.name.toLowerCase().includes(needle)))
+  const activeRow = active ? rows.find((row) => row.student.id === active.studentId) : undefined
+  const activeCell = activeRow?.months.find((cell) => cell.month === active?.month)
+
+  function open(studentId: number, month: string) {
+    setActive((current) => current?.studentId === studentId && current.month === month ? null : { studentId, month })
   }
 
-  function toggleRow(studentId: number) {
-    setExpandedRows((current) => {
-      const next = new Set(current)
-      if (next.has(studentId)) next.delete(studentId)
-      else next.add(studentId)
-      return next
-    })
+  function updateRemark(studentId: number, month: string, remark: string) {
+    setLedger((current) => current && { ...current, remarks: [...current.remarks.filter((item) => !(item.student_id === studentId && item.month.startsWith(month))), ...(remark ? [{ id: 0, branch_id: branchId, student_id: studentId, month: `${month}-01`, remark }] : [])] })
   }
 
   async function copyReport() {
-    const heading = view === 'summary' ? ['Student', 'Enrolled classes', 'Counted sessions', 'Trial sessions', 'Attendance detail'] : ['Student', 'Counted', 'Trials', ...dates]
-    const body = filteredRows.map((row) => view === 'summary'
-      ? [row.name, row.enrolledClasses.map((item) => item.label).join('; '), row.total, row.trialCount, [...row.classes.values()].map((item) => `${item.label}: ${item.dates.map((entry) => `${entry.date}${entry.trial ? ' (Trial)' : ''}`).join(', ')}`).join('; ')]
-      : [row.name, row.total, row.trialCount, ...dates.map((date) => (row.dates.get(date) || []).map((item) => `${item.className}${item.trial ? ' (Trial)' : ''}`).join('; '))])
+    const heading = ['No.', 'Class', 'Student', 'Attendance', ...monthKeys.map((month) => dayjs(`${month}-01`).format('MMM'))]
+    const body = visibleRows.map((row, index) => [index + 1, row.classLabel, row.student.name, `${row.attended}/${row.scheduled}`, ...row.months.map((cell) => [statusLabels[cell.status], attendanceText(cell, currentMonth), cell.remark].filter(Boolean).join(' · '))])
     try {
       await navigator.clipboard.writeText([heading, ...body].map((cells) => cells.map((cell) => String(cell).replace(/\t|\r?\n/g, ' ')).join('\t')).join('\n'))
-      notifications.show({ color: 'green', message: `${period.label} report copied` })
+      notifications.show({ color: 'green', message: `${year} ledger copied` })
     } catch {
       notifications.show({ color: 'red', message: 'Clipboard access was not available' })
     }
   }
 
-  function exportGridReport() {
-    const selectedClass = selectedClassId == null ? 'All classes' : data.classes.find((item) => item.id === selectedClassId)?.label || 'Selected class'
-    const classCodes = new Map(classesInReport.map(([id], index) => [id, index + 1]))
-    const metadata: Array<[string, string]> = [
-      ['Period', period.label],
-      ['Class', selectedClass],
-      ['Legend', `✓ Present · T Trial · * Walk-in${classesInReport.length ? ` · ${classesInReport.map(([id, label]) => `${classCodes.get(id)} ${label}`).join(' · ')}` : ''}`],
-    ]
-    if (search.trim()) metadata.push(['Student filter', search.trim()])
-    const heading = ['Student', 'Counted', 'Trials', ...dates.map((date) => dayjs(date).format('D MMM\nYYYY'))]
-    const body: ExcelValue[][] = filteredRows.map((row) => [
-      `${row.name}${row.age == null ? '' : ` (${row.age})`}`,
-      row.total,
-      row.trialCount,
-      ...dates.map((date) => attendanceExcelCell(row.dates.get(date) || [], classCodes)),
-    ])
-    const workbook = excelWorkbook(`${period.label} Attendance Grid`, metadata, heading, body)
-    const url = URL.createObjectURL(new Blob([workbook], { type: 'application/vnd.ms-excel;charset=utf-8' }))
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `attendance-grid-${year}-${period.months.join('-')}.xls`
-    document.body.append(link)
-    link.click()
-    link.remove()
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
-    notifications.show({ color: 'green', message: `${period.label} attendance grid exported` })
-  }
-
-  const actionsDisabled = loading || Boolean(loadError) || filteredRows.length === 0
+  const panel = activeRow && activeCell ? <MonthPanel key={`${activeRow.student.id}:${activeCell.month}`} branchId={branchId} data={data} row={activeRow} cell={activeCell} currentMonth={currentMonth} portalDropdowns={Boolean(isMobile)} onRemarkSaved={updateRemark} onPaymentSaved={async () => { setActive(null); try { await onChanged() } catch (error) { notifications.show({ color: 'orange', title: 'Payment saved, refresh failed', message: errorMessage(error) }) } }} /> : null
 
   return <>
-    <PageHeader title="Reports" description="Detailed attendance records and export" action={<Group gap="xs"><Button variant="light" leftSection={<IconClipboard size={17} />} onClick={copyReport} disabled={actionsDisabled}>Copy</Button>{view === 'grid' && <Button aria-label="Export grid to Excel" leftSection={<IconFileSpreadsheet size={17} />} onClick={exportGridReport} disabled={actionsDisabled}>Excel</Button>}</Group>} />
-    <SegmentedControl value="attendance" onChange={(value) => { if (value === 'overview') onOpenOverview() }} data={[{ value: 'overview', label: 'Overview' }, { value: 'attendance', label: 'Attendance grid' }]} mb="md" />
-    <SegmentedControl value={view} onChange={(value) => { const nextView = value as 'summary' | 'grid'; setView(nextView); if (nextView === 'grid' && months.includes('All')) setMonths([dayjs().format('MM')]) }} data={[{ value: 'summary', label: 'Summary' }, { value: 'grid', label: 'Grid' }]} mb="md" />
-    <Paper p="md" radius="lg" withBorder mb="md"><Grid gutter="sm" align="flex-end"><Grid.Col span={{ base: 12, md: 6 }}><TextInput label="Student" aria-label="Search report students" leftSection={<IconSearch size={17} />} placeholder="Search by student name…" value={search} onChange={(event) => setSearch(event.currentTarget.value)} /></Grid.Col><Grid.Col span={{ base: 12, xs: 6, md: 2 }}><Select label="Class" aria-label="Filter report students by class" value={classFilter} onChange={setClassFilter} data={[{ value: 'All', label: 'All classes' }, ...data.classes.map((item) => ({ value: String(item.id), label: item.label }))]} allowDeselect={false} /></Grid.Col><Grid.Col span={{ base: 6, md: 2 }}><Select label="Year" value={year} onChange={(value) => setYear(value || dayjs().format('YYYY'))} data={years} allowDeselect={false} /></Grid.Col><Grid.Col span={{ base: 6, md: 2 }}><MultiSelect label="Months" aria-label="Filter report by months" value={months} onChange={changeMonths} data={monthOptions} hidePickedOptions searchable /></Grid.Col></Grid></Paper>
-    {!loading && !loadError && rows.length > 0 && <Text size="xs" c="dimmed" mb="xs" px={4}>{filteredRows.length === rows.length ? `${rows.length} students` : `${filteredRows.length} of ${rows.length} students`}</Text>}
+    <PageHeader title="Reports" description="Yearly attendance and fee ledger for every student" action={<Group gap="xs"><Select aria-label="Report year" value={year} onChange={(value) => { setYear(value || dayjs().format('YYYY')); setActive(null) }} data={years} allowDeselect={false} w={110} /><Button variant="light" leftSection={<IconClipboard size={17} />} onClick={copyReport} disabled={!visibleRows.length}>Copy</Button></Group>} />
 
-    {loading ? <PageLoader label="Loading report…" /> : loadError ? <Alert color="red" title="Could not load report">{loadError}<Button mt="md" size="xs" onClick={() => setReloadRequest((current) => current + 1)}>Retry</Button></Alert> : rows.length === 0 ? <Paper p="xl" radius="lg" withBorder><Text c="dimmed" ta="center">No attendance records for {period.label}.</Text></Paper> : filteredRows.length === 0 ? <Paper p="xl" radius="lg" withBorder><Text c="dimmed" ta="center">No students match the current report filters.</Text></Paper> : view === 'summary' ? <Stack gap="sm">{filteredRows.map((row) => {
-      const expanded = expandedRows.has(row.id)
-      return <Paper key={row.id} className="report-student-summary" radius="lg" withBorder><Box component="button" type="button" className="report-summary-toggle" aria-expanded={expanded} onClick={() => toggleRow(row.id)}><Group justify="space-between" align="flex-start" wrap="nowrap"><Box><Text fw={800}>{row.name}</Text><Text size="xs" c="dimmed">{row.enrolledClasses.length} class{row.enrolledClasses.length === 1 ? '' : 'es'} enrolled</Text></Box><Group gap="sm" wrap="nowrap"><Group gap="xs" wrap="nowrap"><Box ta="center"><Text className="report-total">{row.total}</Text><Text size="xs" c="dimmed">counted</Text></Box>{row.trialCount > 0 && <Box ta="center"><Text fw={800} c="orange">{row.trialCount}</Text><Text size="xs" c="dimmed">trial</Text></Box>}</Group><IconChevronDown className={expanded ? 'expanded' : ''} size={20} /></Group></Group><Group gap={5} mt="xs">{row.enrolledClasses.map((item) => <Badge key={item.id} size="sm" variant="light" color="blue">{item.label}</Badge>)}</Group></Box>{expanded && <Box className="report-summary-detail"><DividerLine /><Group justify="space-between" mb="sm"><Text fw={750} size="sm">{period.label}</Text><Text fw={750} size="sm">{row.total} counted sessions</Text></Group>{row.classes.size ? <Stack gap="md">{[...row.classes].map(([classId, item]) => <Box key={classId}><Group justify="space-between" wrap="nowrap"><Group gap="xs" wrap="nowrap"><span className="report-class-dot" style={{ background: colorFor(classId) }} /><Text size="sm" c="dimmed">{item.label}{item.walkIns ? ` · ${item.walkIns} walk-in` : ''}{item.trials ? ` · ${item.trials} trial` : ''}</Text></Group><Text size="sm" fw={700}>{item.dates.length}</Text></Group><Stack gap={4} mt={5} ml="md">{item.dates.sort((a, b) => a.date.localeCompare(b.date)).map((entry) => <Group key={`${entry.date}-${entry.trial}`} gap="xs"><IconCheck size={14} color={entry.trial ? '#f59e0b' : '#22c55e'} /><Text size="xs" c="dimmed">{dayjs(entry.date).format('D MMM YYYY')}</Text>{entry.trial && <Badge size="xs" color="orange" variant="light">Trial</Badge>}</Group>)}</Stack></Box>)}</Stack> : <Text size="sm" c="dimmed">No attendance in this period.</Text>}</Box>}</Paper>
-    })}</Stack> : <>
-      <Group gap="md" mb="sm" wrap="wrap">{classesInReport.map(([id, label]) => <Group key={id} gap={5}><span className="report-class-dot" style={{ background: colorFor(id) }} /><Text size="xs" c="dimmed">{label}</Text></Group>)}</Group>
-      <Paper radius="lg" withBorder className="report-grid-card"><Table.ScrollContainer minWidth={Math.max(680, 220 + dates.length * 44)}><Table className="attendance-grid-table" withColumnBorders striped><Table.Thead><Table.Tr><Table.Th className="report-sticky-name">Name</Table.Th><Table.Th>Counted</Table.Th><Table.Th>Trial</Table.Th>{dates.map((date) => <Table.Th key={date} ta="center"><Text size="xs" fw={700}>{dayjs(date).format('MMM YYYY')}</Text><Text size="xs">{dayjs(date).format('D')}</Text></Table.Th>)}</Table.Tr></Table.Thead><Table.Tbody>{filteredRows.map((row) => <Table.Tr key={row.id}><Table.Td className="report-sticky-name"><Group gap={4} wrap="nowrap"><Group gap={2}>{row.enrolledClasses.map((item) => <span key={item.id} className="report-class-dot" style={{ background: colorFor(item.id) }} />)}</Group><Text size="sm" fw={650}>{row.name}{row.age != null ? <Text span c="dimmed" size="xs"> ({row.age})</Text> : null}</Text></Group></Table.Td><Table.Td fw={700}>{row.total}</Table.Td><Table.Td fw={700} c="orange">{row.trialCount || '—'}</Table.Td>{dates.map((date) => <Table.Td key={date} ta="center"><Group gap={2} justify="center" wrap="nowrap">{(row.dates.get(date) || []).map((item, index) => <Text key={`${item.classId}-${index}`} span fw={800} aria-label={`${item.trial ? 'Trial session' : 'Present'} for ${item.className}${item.walkIn ? ' as walk-in' : ''}`} title={`${item.className}${item.trial ? ' · Trial' : ''}${item.walkIn ? ' · walk-in' : ''}`} style={{ color: item.trial ? '#f59e0b' : colorFor(item.classId) }}>{item.trial ? 'T' : '✓'}</Text>)}</Group></Table.Td>)}</Table.Tr>)}</Table.Tbody></Table></Table.ScrollContainer></Paper>
-    </>}
+    <Paper radius="lg" withBorder className="ledger-card">
+      <Box p="lg" pb="md">
+        <Group justify="space-between" align="flex-start" wrap="nowrap">
+          <Box><Text fw={800} size="lg">Student ledger</Text><Text c="dimmed" size="sm">Colour shows the month’s payment status; numbers show classes attended / scheduled. Select a month to add a payment or note.</Text></Box>
+          <Badge variant="light" size="lg">{year}</Badge>
+        </Group>
+        <Group mt="md" gap="sm" wrap="wrap">
+          <TextInput className="ledger-search" aria-label="Search ledger students by name" leftSection={<IconSearch size={16} />} placeholder="Search student name…" value={search} onChange={(event) => setSearch(event.currentTarget.value)} />
+          <Select aria-label="Filter ledger by class" placeholder="All classes" clearable value={classFilter} onChange={setClassFilter} data={classOptions} w={180} />
+        </Group>
+        <Group mt="md" gap="lg" wrap="wrap" className="ledger-legend" role="list" aria-label="Legend">
+          {legend.map((status) => <Group key={status} gap={6} wrap="nowrap" role="listitem"><span className="ledger-swatch" data-status={status} /><Text size="xs" fw={600}>{statusLabels[status]}</Text></Group>)}
+          <Group gap={6} wrap="nowrap" role="listitem"><span className="ledger-swatch ledger-swatch-note" /><Text size="xs" fw={600}>Has note</Text></Group>
+        </Group>
+        {ledger && <Text size="xs" c="dimmed" mt="sm">{visibleRows.length === rows.length ? `${rows.length} student${rows.length === 1 ? '' : 's'}` : `${visibleRows.length} of ${rows.length} students`}{loading ? ' · Refreshing…' : ''}</Text>}
+      </Box>
+
+      {loadError ? <Box p="lg" pt={0}><Alert color="red" title="Could not load ledger">{loadError}<Button mt="md" size="xs" onClick={() => setReloadRequest((current) => current + 1)}>Retry</Button></Alert></Box>
+        : !ledger ? <Stack p="lg" pt={0} gap="xs" role="status" aria-label="Loading ledger">{Array.from({ length: 6 }, (_, index) => <Skeleton key={index} height={44} radius="sm" />)}</Stack>
+          : !visibleRows.length ? <Box p="lg" pt={0}><EmptyState title="No students to show" message={rows.length ? 'No student matches this search or class filter.' : `No enrolled students for ${year}.`} icon={IconUsers} /></Box>
+            : isMobile ? <Stack p="md" pt={0} gap="sm">{visibleRows.map((row) => <LedgerCard key={row.student.id} row={row} currentMonth={currentMonth} onOpen={(month) => open(row.student.id, month)} />)}</Stack>
+              : <Box className="ledger-scroll">
+                <Table className="ledger-table">
+                  <Table.Thead><Table.Tr>
+                    <Table.Th className="ledger-sticky ledger-col-no">No.</Table.Th>
+                    <Table.Th className="ledger-sticky ledger-col-class">Class</Table.Th>
+                    <Table.Th className="ledger-sticky ledger-col-student">Student</Table.Th>
+                    <Table.Th className="ledger-sticky ledger-col-attendance">Attendance</Table.Th>
+                    {monthKeys.map((month) => <Table.Th key={month} className={month === currentMonth ? 'ledger-month is-current' : 'ledger-month'}>{dayjs(`${month}-01`).format('MMM')}</Table.Th>)}
+                  </Table.Tr></Table.Thead>
+                  <Table.Tbody>{visibleRows.map((row, index) => <Table.Tr key={row.student.id} className={row.student.status === 'Active' ? undefined : 'is-inactive'}>
+                    <Table.Td className="ledger-sticky ledger-col-no">{index + 1}</Table.Td>
+                    <Table.Td className="ledger-sticky ledger-col-class"><ClassChip label={row.classLabel} /></Table.Td>
+                    <Table.Td className="ledger-sticky ledger-col-student"><StudentLabel row={row} /></Table.Td>
+                    <Table.Td className="ledger-sticky ledger-col-attendance"><AttendanceTotal row={row} /></Table.Td>
+                    {row.months.map((cell) => {
+                      const opened = active?.studentId === row.student.id && active.month === cell.month
+                      return <Table.Td key={cell.month} className={cell.month === currentMonth ? 'ledger-month-cell is-current' : 'ledger-month-cell'}>
+                        <Popover opened={opened} onChange={(next) => { if (!next) setActive(null) }} width={360} position="bottom" withArrow shadow="lg" trapFocus>
+                          <Popover.Target><MonthButton row={row} cell={cell} currentMonth={currentMonth} opened={opened} onClick={() => open(row.student.id, cell.month)} /></Popover.Target>
+                          <Popover.Dropdown className="ledger-popover">{opened && panel}</Popover.Dropdown>
+                        </Popover>
+                      </Table.Td>
+                    })}
+                  </Table.Tr>)}</Table.Tbody>
+                </Table>
+              </Box>}
+    </Paper>
+
+    {isMobile && <ResponsiveModal opened={Boolean(panel)} onClose={() => setActive(null)} title="Month details">{panel}</ResponsiveModal>}
   </>
 }
 
-function DividerLine() {
-  return <Box my="md" style={{ borderTop: '1px solid #e5e8ee' }} />
+function MonthButton({ row, cell, currentMonth, opened, onClick, compact, ...rest }: { row: LedgerRow; cell: MonthCell; currentMonth: string; opened?: boolean; onClick: () => void; compact?: boolean } & Omit<ComponentPropsWithRef<'button'>, 'onClick'>) {
+  const attendance = attendanceText(cell, currentMonth)
+  return <button {...rest} type="button" className={compact ? 'ledger-cell ledger-cell-compact' : 'ledger-cell'} data-status={cell.status} aria-expanded={opened} aria-label={`${row.student.name}, ${dayjs(`${cell.month}-01`).format('MMMM')}: ${statusLabels[cell.status]}${attendance ? `, attended ${cell.attended} of ${cell.scheduled}` : ''}${cell.remark ? ', has note' : ''}`} onClick={onClick}>
+    {compact && <span className="ledger-cell-month">{dayjs(`${cell.month}-01`).format('MMM')}</span>}
+    <span className="ledger-cell-value">{attendance || (cell.status === 'not-enrolled' ? '—' : '')}</span>
+    {cell.remark && <span className="ledger-note-flag" aria-hidden="true" />}
+  </button>
 }
 
-function attendanceExcelCell(entries: ReportDateEntry[], classCodes: Map<number, number>): ExcelValue {
-  if (!entries.length) return ''
-  const value = entries.map((item) => `${item.trial ? 'T' : '✓'}${classCodes.get(item.classId) || ''}${item.walkIn ? '*' : ''}`).join(' ')
-  const styles = new Set(entries.map((item) => item.trial ? 'TrialMark' : item.walkIn ? 'WalkInMark' : 'PresentMark'))
-  return { value, style: styles.size === 1 ? [...styles][0] : 'MixedMark' }
+function LedgerCard({ row, currentMonth, onOpen }: { row: LedgerRow; currentMonth: string; onOpen: (month: string) => void }) {
+  return <Paper p="md" radius="md" withBorder className={row.student.status === 'Active' ? 'ledger-mobile-card' : 'ledger-mobile-card is-inactive'}>
+    <Group justify="space-between" align="flex-start" wrap="nowrap">
+      <StudentLabel row={row} />
+      <AttendanceTotal row={row} />
+    </Group>
+    <Box mt="xs"><ClassChip label={row.classLabel} /></Box>
+    <SimpleGrid cols={6} spacing={6} mt="sm">{row.months.map((cell) => <MonthButton key={cell.month} row={row} cell={cell} currentMonth={currentMonth} onClick={() => onOpen(cell.month)} compact />)}</SimpleGrid>
+  </Paper>
 }
 
-function excelWorkbook(title: string, metadata: Array<[string, string]>, heading: string[], body: ExcelValue[][]) {
-  const headerRow = metadata.length + 3
-  const rows = [
-    `<Row ss:Height="24"><Cell ss:StyleID="Title" ss:MergeAcross="${heading.length - 1}"><Data ss:Type="String">${xmlText(title)}</Data></Cell></Row>`,
-    ...metadata.map(([label, value]) => `<Row><Cell ss:StyleID="MetaLabel"><Data ss:Type="String">${xmlText(label)}</Data></Cell><Cell ss:MergeAcross="${heading.length - 2}"><Data ss:Type="String">${xmlText(value)}</Data></Cell></Row>`),
-    '<Row/>',
-    `<Row ss:Height="32">${heading.map((value) => excelCell(value, 'Header')).join('')}</Row>`,
-    ...body.map((values) => `<Row ss:AutoFitHeight="0" ss:Height="22">${values.map((value, index) => excelCell(value, index === 0 ? 'Body' : index < 3 ? 'Number' : 'Attendance')).join('')}</Row>`),
-  ]
-  const dateColumns = Array.from({ length: Math.max(0, heading.length - 3) }, () => '<Column ss:Width="62"/>').join('')
-  const filter = body.length ? `<AutoFilter x:Range="R${headerRow}C1:R${headerRow + body.length}C${heading.length}" xmlns="urn:schemas-microsoft-com:office:excel"/>` : ''
-  return `\uFEFF<?xml version="1.0" encoding="UTF-8"?><?mso-application progid="Excel.Sheet"?><Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"><Styles><Style ss:ID="Default" ss:Name="Normal"><Alignment ss:Vertical="Center"/><Font ss:FontName="Calibri" ss:Size="11"/></Style><Style ss:ID="Title"><Font ss:FontName="Calibri" ss:Size="16" ss:Bold="1"/></Style><Style ss:ID="MetaLabel"><Font ss:Bold="1"/></Style><Style ss:ID="Header"><Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9E2F3"/></Borders><Font ss:Bold="1" ss:Color="#FFFFFF"/><Interior ss:Color="#1F4E78" ss:Pattern="Solid"/></Style><Style ss:ID="Body"><Alignment ss:Vertical="Center"/><Borders><Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9E2F3"/><Border ss:Position="Right" ss:LineStyle="Continuous" ss:Weight="1" ss:Color="#D9E2F3"/></Borders></Style><Style ss:ID="Number" ss:Parent="Body"><Alignment ss:Horizontal="Center" ss:Vertical="Center"/></Style><Style ss:ID="Attendance" ss:Parent="Body"><Alignment ss:Horizontal="Center" ss:Vertical="Center"/></Style><Style ss:ID="PresentMark" ss:Parent="Attendance"><Font ss:Bold="1" ss:Color="#15803D"/><Interior ss:Color="#DCFCE7" ss:Pattern="Solid"/></Style><Style ss:ID="WalkInMark" ss:Parent="Attendance"><Font ss:Bold="1" ss:Color="#1D4ED8"/><Interior ss:Color="#DBEAFE" ss:Pattern="Solid"/></Style><Style ss:ID="TrialMark" ss:Parent="Attendance"><Font ss:Bold="1" ss:Color="#C2410C"/><Interior ss:Color="#FFEDD5" ss:Pattern="Solid"/></Style><Style ss:ID="MixedMark" ss:Parent="Attendance"><Font ss:Bold="1" ss:Color="#6D28D9"/><Interior ss:Color="#EDE9FE" ss:Pattern="Solid"/></Style></Styles><Worksheet ss:Name="Attendance Grid"><Table ss:DefaultRowHeight="22"><Column ss:Width="190"/><Column ss:Width="58"/><Column ss:Width="50"/>${dateColumns}${rows.join('')}</Table><WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel"><FreezePanes/><FrozenNoSplit/><SplitHorizontal>${headerRow}</SplitHorizontal><TopRowBottomPane>${headerRow}</TopRowBottomPane><SplitVertical>3</SplitVertical><LeftColumnRightPane>3</LeftColumnRightPane><ActivePane>0</ActivePane></WorksheetOptions>${filter}</Worksheet></Workbook>`
+function StudentLabel({ row }: { row: LedgerRow }) {
+  return <Group gap="sm" wrap="nowrap" miw={0}>
+    <PersonAvatar name={row.student.name} src={publicImageUrl('student-photos', row.student.photo_path)} size={34} />
+    <Box miw={0}>
+      <Text fw={700} size="sm" truncate="end">{row.student.name}</Text>
+      <Text size="xs" c="dimmed">{row.student.status === 'Active' ? row.age != null ? `Age ${row.age}` : 'Age not set' : 'Inactive'}</Text>
+    </Box>
+  </Group>
 }
 
-function excelCell(input: ExcelValue, fallbackStyle?: string) {
-  const cell = typeof input === 'object' ? input : { value: input, style: fallbackStyle }
-  const type = typeof cell.value === 'number' ? 'Number' : 'String'
-  return `<Cell${cell.style ? ` ss:StyleID="${cell.style}"` : ''}><Data ss:Type="${type}">${xmlText(String(cell.value))}</Data></Cell>`
+function AttendanceTotal({ row }: { row: LedgerRow }) {
+  return <Box className="ledger-attendance-total">
+    <Text fw={800} size="sm">{row.attended} / {row.scheduled}</Text>
+    <Text size="xs" c="dimmed">{row.scheduled ? `${Math.round((row.attended / row.scheduled) * 100)}%` : 'No sessions'}</Text>
+  </Box>
 }
 
-function xmlText(value: string) {
-  const valid = [...value].filter((character) => {
-    const code = character.codePointAt(0)!
-    return code === 9 || code === 10 || code === 13 || (code >= 32 && code <= 0xD7FF) || (code >= 0xE000 && code <= 0xFFFD) || (code >= 0x10000 && code <= 0x10FFFF)
-  }).join('')
-  return valid.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;')
+function ClassChip({ label }: { label: string }) {
+  const tone = chipTones[[...label].reduce((sum, char) => sum + char.charCodeAt(0), 0) % chipTones.length]
+  return <span className="ledger-class-chip" data-tone={tone} title={label}>{label}</span>
+}
+
+function MonthPanel({ branchId, data, row, cell, currentMonth, portalDropdowns, onRemarkSaved, onPaymentSaved }: {
+  branchId: number
+  data: BootstrapData
+  row: LedgerRow
+  cell: MonthCell
+  currentMonth: string
+  portalDropdowns: boolean
+  onRemarkSaved: (studentId: number, month: string, remark: string) => void
+  onPaymentSaved: () => Promise<void>
+}) {
+  const hasPaid = cell.payments.some((payment) => payment.status === 'Paid')
+  const [remark, setRemark] = useState(cell.remark)
+  const [formOpen, setFormOpen] = useState(!hasPaid)
+  const [amount, setAmount] = useState<number | string>(row.student.monthly_fee ?? '')
+  const [status, setStatus] = useState<PaymentStatus | null>('Paid')
+  const [method, setMethod] = useState<PaymentMethod | null>('Bank Transfer')
+  const [dateReceived, setDateReceived] = useState(dayjs().format('YYYY-MM-DD'))
+  const [referenceNo, setReferenceNo] = useState('')
+  const [paymentRemarks, setPaymentRemarks] = useState('')
+  const [savingRemark, setSavingRemark] = useState(false)
+  const [savingPayment, setSavingPayment] = useState(false)
+  const submitLock = useRef(false)
+  const attendance = attendanceText(cell, currentMonth)
+  const monthLabel = dayjs(`${cell.month}-01`).format('MMMM YYYY')
+  const comboboxProps = { withinPortal: portalDropdowns }
+  const paymentValidation = amount === '' || !status ? '' : status === 'Unpaid' && Number(amount) > 0 ? 'Unpaid records must have RM0 received.' : status !== 'Unpaid' && Number(amount) <= 0 ? `${status} records require an amount greater than RM0.` : ''
+
+  async function submitRemark() {
+    setSavingRemark(true)
+    try {
+      await saveMonthRemark(branchId, row.student.id, cell.month, remark)
+      onRemarkSaved(row.student.id, cell.month, remark.trim())
+      notifications.show({ color: 'green', message: remark.trim() ? 'Note saved' : 'Note removed' })
+    } catch (error) {
+      notifications.show({ color: 'red', title: 'Could not save note', message: errorMessage(error) })
+    } finally {
+      setSavingRemark(false)
+    }
+  }
+
+  async function submitPayment() {
+    if (amount === '' || !status || !method || !dateReceived || paymentValidation || submitLock.current) return
+    submitLock.current = true
+    setSavingPayment(true)
+    try {
+      const duplicate = await findDuplicateReference(branchId, referenceNo)
+      if (duplicate && !window.confirm(`Reference already exists for ${duplicate.student?.name || 'another student'} (${dayjs(duplicate.fee_month).format('MMM YYYY')}). Save anyway?`)) return
+      const enrollment = data.enrollments.find((item) => item.student_id === row.student.id && !item.end_date)
+      const coachId = data.classes.find((item) => item.id === enrollment?.class_id)?.coach_id || null
+      await recordStudentPayment({ studentId: row.student.id, feeMonths: [cell.month], amount: Number(amount), method, status, dateReceived, remarks: paymentRemarks, referenceNo, coachId, receiptPath: null })
+      notifications.show({ color: 'green', title: 'Payment recorded', message: `${row.student.name} · ${monthLabel}` })
+      await onPaymentSaved()
+    } catch (error) {
+      notifications.show({ color: 'red', title: 'Could not save payment', message: errorMessage(error) })
+    } finally {
+      submitLock.current = false
+      setSavingPayment(false)
+    }
+  }
+
+  return <Stack gap="md" className="ledger-panel">
+    <Group justify="space-between" align="flex-start" wrap="nowrap">
+      <Box miw={0}>
+        <Text fw={800} truncate="end">{row.student.name}</Text>
+        <Text size="sm" c="dimmed">{monthLabel} · RM {money(row.student.monthly_fee || 0)} / month</Text>
+      </Box>
+      <span className="ledger-status-pill" data-status={cell.status}>{statusLabels[cell.status]}</span>
+    </Group>
+
+    <Box>
+      <Text size="xs" fw={700} tt="uppercase" c="dimmed">Attendance</Text>
+      <Text size="sm" fw={650} mt={2}>{attendance ? `${cell.attended} of ${cell.scheduled} classes attended` : cell.month > currentMonth ? 'Upcoming month' : 'No classes scheduled'}</Text>
+      {cell.dates.length > 0 && <Group gap={6} mt={6}>{cell.dates.map((date, index) => <Badge key={`${date}-${index}`} variant="light" color="green" leftSection={<IconCheck size={11} />}>{dayjs(date).format('D MMM')}</Badge>)}</Group>}
+    </Box>
+
+    {cell.payments.length > 0 && <Box>
+      <Text size="xs" fw={700} tt="uppercase" c="dimmed">Payments</Text>
+      <Stack gap={6} mt={4}>{cell.payments.map((payment) => <Box key={payment.id} className="ledger-payment-line">
+        <Group justify="space-between" wrap="nowrap"><Text size="sm" fw={700}>RM {money(payment.amount)}</Text><span className="ledger-status-pill" data-status={payment.status.toLowerCase()}>{payment.status}</span></Group>
+        <Text size="xs" c="dimmed">{[payment.method || 'No method', payment.date_received ? dayjs(payment.date_received).format('D MMM YYYY') : null, payment.reference_no || null].filter(Boolean).join(' · ')}</Text>
+        {payment.remarks && <Text size="xs" mt={2}>{payment.remarks}</Text>}
+      </Box>)}</Stack>
+    </Box>}
+
+    <Box>
+      <Textarea label="Month note" leftSection={<IconNote size={15} />} placeholder="e.g. On leave, replacement class on 25/4" autosize minRows={2} maxRows={4} value={remark} onChange={(event) => setRemark(event.currentTarget.value)} />
+      <Group justify="flex-end" mt={6}><Button size="xs" variant="light" onClick={submitRemark} loading={savingRemark} disabled={remark.trim() === cell.remark}>Save note</Button></Group>
+    </Box>
+
+    {hasPaid && !formOpen && <Button variant="subtle" size="xs" leftSection={<IconPlus size={14} />} onClick={() => setFormOpen(true)}>Add another payment</Button>}
+    <Collapse in={formOpen}>
+      <Stack gap="xs" className="ledger-payment-form">
+        <Text size="xs" fw={700} tt="uppercase" c="dimmed">Record payment for {dayjs(`${cell.month}-01`).format('MMM YYYY')}</Text>
+        <Group grow gap="xs"><NumberInput label="Amount (RM)" value={amount} onChange={setAmount} min={0} decimalScale={2} required /><Select label="Status" value={status} onChange={(value) => setStatus(value as PaymentStatus)} data={statuses} allowDeselect={false} comboboxProps={comboboxProps} /></Group>
+        <Group grow gap="xs"><Select label="Method" value={method} onChange={(value) => setMethod(value as PaymentMethod)} data={methods} allowDeselect={false} comboboxProps={comboboxProps} /><TextInput label="Date received" type="date" value={dateReceived} onChange={(event) => setDateReceived(event.currentTarget.value)} required /></Group>
+        <TextInput label="Reference number" value={referenceNo} onChange={(event) => setReferenceNo(event.currentTarget.value)} />
+        <TextInput label="Payment remarks" placeholder="e.g. includes registration fee" value={paymentRemarks} onChange={(event) => setPaymentRemarks(event.currentTarget.value)} />
+        {paymentValidation && <Text size="xs" c="red">{paymentValidation}</Text>}
+        <Button mt={4} onClick={submitPayment} loading={savingPayment} disabled={amount === '' || !dateReceived || Boolean(paymentValidation)}>Save payment</Button>
+      </Stack>
+    </Collapse>
+  </Stack>
+}
+
+function cellStatus(student: Student, enrollments: Enrollment[], payments: Payment[], month: string, currentMonth: string): CellStatus {
+  if (payments.some((payment) => payment.status === 'Paid')) return 'paid'
+  const enrolled = enrollments.some((entry) => entry.start_date.slice(0, 7) <= month && (!entry.end_date || entry.end_date.slice(0, 7) >= month))
+  if (enrolled && month <= currentMonth) {
+    const received = payments.filter((payment) => payment.status === 'Partial').reduce((sum, payment) => sum + Number(payment.amount), 0)
+    if (Number(student.monthly_fee || 0) - received <= 0) return 'paid'
+    if (received > 0) return 'partial'
+    return payments.some((payment) => payment.status === 'Unpaid') ? 'unpaid' : 'outstanding'
+  }
+  if (payments.length) return payments.some((payment) => payment.status === 'Partial') ? 'partial' : 'unpaid'
+  return enrolled ? 'not-due' : 'not-enrolled'
+}
+
+function attendanceText(cell: MonthCell, currentMonth: string) {
+  return cell.month <= currentMonth && (cell.scheduled || cell.attended) ? `${cell.attended}/${cell.scheduled}` : ''
+}
+
+function money(value: number) {
+  return Number(value || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : 'Something went wrong'
 }

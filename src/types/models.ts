@@ -57,6 +57,7 @@ export interface AcademyClass {
   id: number
   branch_id: number
   label: string
+  short_label?: string
   day_of_week: string
   start_time: string | null
   end_time: string | null
@@ -93,6 +94,14 @@ export interface Attendance {
   status: '' | 'Present'
   remarks: string
   is_trial: boolean
+}
+
+export interface StudentMonthRemark {
+  id: number
+  branch_id: number
+  student_id: number
+  month: string
+  remark: string
 }
 
 export interface CoachAttendance {

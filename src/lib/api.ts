@@ -20,6 +20,7 @@ import type {
   Profile,
   Session,
   Student,
+  StudentMonthRemark,
 } from '../types/models'
 
 function unwrap<T>(result: { data: T | null; error: { message: string } | null }) {
@@ -322,6 +323,35 @@ export async function getAttendanceReport(branchId: number, startDate: string, e
     student: Pick<Student, 'id' | 'name' | 'status' | 'gender' | 'level'>
     class: Pick<AcademyClass, 'id' | 'label'>
   }>
+}
+
+async function fetchAllRows<T>(query: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>) {
+  const pageSize = 1000
+  const rows: T[] = []
+  for (let from = 0; ; from += pageSize) {
+    const page = unwrap(await query(from, from + pageSize - 1)) || []
+    rows.push(...page)
+    if (page.length < pageSize) return rows
+  }
+}
+
+export async function getReportLedger(branchId: number, year: string) {
+  const start = `${year}-01-01`
+  const end = `${year}-12-31`
+  const [attendance, sessions, remarks] = await Promise.all([
+    fetchAllRows<Pick<Attendance, 'student_id' | 'session_id' | 'class_id' | 'attendance_date' | 'is_trial'>>((from, to) => supabase.from('attendance').select('student_id,session_id,class_id,attendance_date,is_trial').eq('branch_id', branchId).eq('status', 'Present').gte('attendance_date', start).lte('attendance_date', end).order('attendance_date').order('student_id').order('session_id').range(from, to)),
+    fetchAllRows<Pick<Session, 'id' | 'class_id' | 'session_date'>>((from, to) => supabase.from('sessions').select('id,class_id,session_date').eq('branch_id', branchId).gte('session_date', start).lte('session_date', end).order('id').range(from, to)),
+    fetchAllRows<StudentMonthRemark>((from, to) => supabase.from('student_month_remarks').select('id,branch_id,student_id,month,remark').eq('branch_id', branchId).gte('month', start).lte('month', end).order('id').range(from, to)),
+  ])
+  return { attendance, sessions, remarks }
+}
+
+export async function saveMonthRemark(branchId: number, studentId: number, month: string, remark: string) {
+  if (!remark.trim()) {
+    unwrap(await supabase.from('student_month_remarks').delete().eq('student_id', studentId).eq('month', `${month}-01`))
+    return null
+  }
+  return unwrap(await supabase.from('student_month_remarks').upsert({ branch_id: branchId, student_id: studentId, month: `${month}-01`, remark: remark.trim() }, { onConflict: 'student_id,month' }).select('id,branch_id,student_id,month,remark').single()) as StudentMonthRemark
 }
 
 export async function uploadImage(bucket: string, branchId: number, file: File, entityId?: number) {
