@@ -14,6 +14,7 @@ import type { AcademyClass, BootstrapData, Enrollment, Payment, PaymentMethod, P
 type Ledger = Awaited<ReturnType<typeof getReportLedger>>
 type CellStatus = 'paid' | 'partial' | 'unpaid' | 'outstanding' | 'not-enrolled' | 'not-due'
 type MonthCell = { month: string; status: CellStatus; attended: number; scheduled: number; dates: string[]; payments: Payment[]; remark: string }
+type ClassSummary = { label: string; students: number; months: Array<{ month: string; paid: number; total: number }> }
 type LedgerRow = { student: Student; classLabel: string; dayOrder: number; age: number | null; attended: number; scheduled: number; months: MonthCell[] }
 
 const methods: PaymentMethod[] = ['Cash', 'Bank Transfer', "Touch 'n Go eWallet", 'Online', 'Others']
@@ -110,6 +111,19 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
   const classOptions = useMemo(() => [...new Set(rows.map((row) => row.classLabel))], [rows])
   const needle = search.trim().toLowerCase()
   const visibleRows = rows.filter((row) => (!classFilter || row.classLabel === classFilter) && (!needle || row.student.name.toLowerCase().includes(needle)))
+  const summaryRows = useMemo(() => {
+    const scoped = rows.filter((row) => !classFilter || row.classLabel === classFilter)
+    const summarize = (label: string, list: LedgerRow[]): ClassSummary => ({
+      label,
+      students: list.length,
+      months: monthKeys.map((month, index) => {
+        const enrolled = list.map((row) => row.months[index]).filter((cell) => cell.status !== 'not-enrolled')
+        return { month, paid: enrolled.filter((cell) => cell.status === 'paid').length, total: enrolled.length }
+      }),
+    })
+    const groups = [...new Set(scoped.map((row) => row.classLabel))].map((label) => summarize(label, scoped.filter((row) => row.classLabel === label)))
+    return groups.length > 1 ? [summarize('All classes', scoped), ...groups] : groups
+  }, [classFilter, monthKeys, rows])
   const activeRow = active ? rows.find((row) => row.student.id === active.studentId) : undefined
   const activeCell = activeRow?.months.find((cell) => cell.month === active?.month)
 
@@ -129,9 +143,10 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
 
   async function copyReport() {
     const heading = ['No.', 'Class', 'Student', 'Attendance', ...monthKeys.map(monthHeader)]
+    const summary = summaryRows.map((item) => ['', item.label, 'Paid students', `${item.students} students`, ...item.months.map((cell) => cell.total ? `${cell.paid}/${cell.total}` : '')])
     const body = visibleRows.map((row, index) => [index + 1, row.classLabel, row.student.name, `${row.attended}/${row.scheduled}`, ...row.months.map((cell) => [statusLabels[cell.status], attendanceText(cell, currentMonth), cell.remark].filter(Boolean).join(' · '))])
     try {
-      await navigator.clipboard.writeText([heading, ...body].map((cells) => cells.map((cell) => String(cell).replace(/\t|\r?\n/g, ' ')).join('\t')).join('\n'))
+      await navigator.clipboard.writeText([heading, ...summary, ...body].map((cells) => cells.map((cell) => String(cell).replace(/\t|\r?\n/g, ' ')).join('\t')).join('\n'))
       notifications.show({ color: 'green', message: `${periodLabel} ledger copied` })
     } catch {
       notifications.show({ color: 'red', message: 'Clipboard access was not available' })
@@ -163,7 +178,7 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
       {loadError ? <Box p="lg" pt={0}><Alert color="red" title="Could not load ledger">{loadError}<Button mt="md" size="xs" onClick={() => setReloadRequest((current) => current + 1)}>Retry</Button></Alert></Box>
         : !ledger ? <Stack p="lg" pt={0} gap="xs" role="status" aria-label="Loading ledger">{Array.from({ length: 6 }, (_, index) => <Skeleton key={index} height={44} radius="sm" />)}</Stack>
           : !visibleRows.length ? <Box p="lg" pt={0}><EmptyState title="No students to show" message={rows.length ? 'No student matches this search or class filter.' : `No enrolled students for ${periodLabel}.`} icon={IconUsers} /></Box>
-            : isMobile ? <Stack p="md" pt={0} gap="sm">{visibleRows.map((row) => <LedgerCard key={row.student.id} row={row} currentMonth={currentMonth} onOpen={(month) => open(row.student.id, month)} onOpenStudent={() => openStudent(row.student)} />)}</Stack>
+            : isMobile ? <Stack p="md" pt={0} gap="sm"><LedgerSummaryCard summaries={summaryRows} currentMonth={currentMonth} />{visibleRows.map((row) => <LedgerCard key={row.student.id} row={row} currentMonth={currentMonth} onOpen={(month) => open(row.student.id, month)} onOpenStudent={() => openStudent(row.student)} />)}</Stack>
               : <Box className="ledger-scroll">
                 <Table className="ledger-table" style={{ minWidth: 456 + monthKeys.length * 72 }}>
                   <Table.Thead><Table.Tr>
@@ -173,7 +188,13 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
                     <Table.Th className="ledger-sticky ledger-col-attendance">Attendance</Table.Th>
                     {monthKeys.map((month) => <Table.Th key={month} className={month === currentMonth ? 'ledger-month is-current' : 'ledger-month'}>{monthHeader(month)}</Table.Th>)}
                   </Table.Tr></Table.Thead>
-                  <Table.Tbody>{visibleRows.map((row, index) => <Table.Tr key={row.student.id} className={row.student.status === 'Active' ? undefined : 'is-inactive'}>
+                  <Table.Tbody>{summaryRows.map((item, index) => <Table.Tr key={`summary-${item.label}`} className={index === summaryRows.length - 1 ? 'ledger-summary-row is-last' : 'ledger-summary-row'}>
+                    <Table.Td className="ledger-sticky ledger-col-no" />
+                    <Table.Td className="ledger-sticky ledger-col-class">{item.label === 'All classes' ? <Text size="xs" fw={800}>All</Text> : <ClassChip label={item.label} />}</Table.Td>
+                    <Table.Td className="ledger-sticky ledger-col-student"><Text size="sm" fw={700}>Paid students</Text><Text size="xs" c="dimmed">{item.label === 'All classes' ? 'All classes · ' : ''}{item.students} student{item.students === 1 ? '' : 's'}</Text></Table.Td>
+                    <Table.Td className="ledger-sticky ledger-col-attendance" />
+                    {item.months.map((cell) => <Table.Td key={cell.month} className={cell.month === currentMonth ? 'ledger-month-cell is-current' : 'ledger-month-cell'}><SummaryCell label={item.label} cell={cell} /></Table.Td>)}
+                  </Table.Tr>)}{visibleRows.map((row, index) => <Table.Tr key={row.student.id} className={row.student.status === 'Active' ? undefined : 'is-inactive'}>
                     <Table.Td className="ledger-sticky ledger-col-no">{index + 1}</Table.Td>
                     <Table.Td className="ledger-sticky ledger-col-class"><ClassChip label={row.classLabel} /></Table.Td>
                     <Table.Td className="ledger-sticky ledger-col-student"><StudentLabel row={row} onOpen={() => openStudent(row.student)} /></Table.Td>
@@ -214,6 +235,23 @@ function LedgerCard({ row, currentMonth, onOpen, onOpenStudent }: { row: LedgerR
     </Group>
     <Box mt="xs"><ClassChip label={row.classLabel} /></Box>
     <SimpleGrid cols={6} spacing={6} mt="sm">{row.months.map((cell) => <MonthButton key={cell.month} row={row} cell={cell} currentMonth={currentMonth} onClick={() => onOpen(cell.month)} compact />)}</SimpleGrid>
+  </Paper>
+}
+
+function SummaryCell({ label, cell, compact }: { label: string; cell: ClassSummary['months'][number]; compact?: boolean }) {
+  return <span className={compact ? 'ledger-summary-cell ledger-summary-cell-compact' : 'ledger-summary-cell'} data-complete={cell.total > 0 && cell.paid === cell.total} data-empty={cell.total === 0} title={`${label}, ${dayjs(`${cell.month}-01`).format('MMMM YYYY')}: ${cell.paid} of ${cell.total} students paid`}>
+    {compact && <span className="ledger-cell-month">{dayjs(`${cell.month}-01`).format('MMM')}</span>}
+    <span>{cell.total ? `${cell.paid}/${cell.total}` : '—'}</span>
+  </span>
+}
+
+function LedgerSummaryCard({ summaries, currentMonth }: { summaries: ClassSummary[]; currentMonth: string }) {
+  return <Paper p="md" radius="md" withBorder className="ledger-summary-card">
+    <Text fw={800} size="sm">Paid students by class</Text>
+    <Stack gap="sm" mt="sm">{summaries.map((item) => <Box key={item.label}>
+      <Group gap="xs" wrap="nowrap">{item.label === 'All classes' ? <Text size="xs" fw={800}>All classes</Text> : <ClassChip label={item.label} />}<Text size="xs" c="dimmed">{item.students} student{item.students === 1 ? '' : 's'}</Text></Group>
+      <SimpleGrid cols={6} spacing={6} mt={6}>{item.months.map((cell) => <Box key={cell.month} className={cell.month === currentMonth ? 'is-current' : undefined}><SummaryCell label={item.label} cell={cell} compact /></Box>)}</SimpleGrid>
+    </Box>)}</Stack>
   </Paper>
 }
 

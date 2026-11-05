@@ -11,13 +11,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
   const simpleLoginInProgress = useRef(false)
   const sessionRequest = useRef(0)
+  const profileUserId = useRef<string | null>(null)
 
   useEffect(() => {
     let active = true
 
     async function applySession(nextSession: Session | null) {
-      const requestId = ++sessionRequest.current
       if (!active) return
+      if (nextSession?.user && nextSession.user.id === profileUserId.current) {
+        setSession((current) => current?.access_token === nextSession.access_token ? current : nextSession)
+        return
+      }
+      const requestId = ++sessionRequest.current
+      profileUserId.current = null
       if (nextSession?.user) setLoading(true)
       setSession(nextSession)
       setProfile(null)
@@ -28,7 +34,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       try {
         const nextProfile = await getProfile(nextSession.user.id)
-        if (active && requestId === sessionRequest.current) setProfile(nextProfile)
+        if (active && requestId === sessionRequest.current) {
+          profileUserId.current = nextSession.user.id
+          setProfile(nextProfile)
+        }
       } finally {
         if (active && requestId === sessionRequest.current) setLoading(false)
       }
@@ -52,6 +61,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loading,
     async signInWithName(name, password) {
       simpleLoginInProgress.current = true
+      profileUserId.current = null
       setLoading(true)
       setProfile(null)
       try {
@@ -59,6 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (anonymous.error) throw anonymous.error
         if (!anonymous.data.session?.user) throw new Error('Could not create a secure attendance session')
         const nextProfile = await loginWithSimpleAccess(name, password)
+        profileUserId.current = anonymous.data.session.user.id
         setSession(anonymous.data.session)
         setProfile(nextProfile)
         setLoading(false)

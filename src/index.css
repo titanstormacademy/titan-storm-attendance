@@ -2013,3 +2013,49 @@ select {
   outline: 2px solid #f26522;
   outline-offset: 2px;
 }
+
+.ledger-table tbody tr.ledger-summary-row td {
+  background: var(--ledger-head-bg);
+}
+
+.ledger-table tbody tr.ledger-summary-row.is-last td {
+  border-bottom: 2px solid var(--ledger-line);
+}
+
+.ledger-table tbody tr.ledger-summary-row td.ledger-month-cell.is-current {
+  background: var(--ledger-current-bg);
+}
+
+.ledger-summary-cell {
+  display: flex;
+  min-height: 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--ledger-muted-fg);
+  font-size: 0.78rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  background: var(--ledger-surface);
+  box-shadow: inset 0 0 0 1px var(--ledger-line);
+}
+
+.ledger-summary-cell[data-complete="true"] {
+  color: var(--ledger-paid-fg);
+  background: var(--ledger-paid-bg);
+  box-shadow: none;
+}
+
+.ledger-summary-cell[data-empty="true"] {
+  background: transparent;
+  box-shadow: none;
+}
+
+.ledger-summary-cell-compact {
+  min-height: 42px;
+  flex-direction: column;
+}
+
+.ledger-summary-card .is-current .ledger-summary-cell {
+  box-shadow: inset 0 0 0 1.5px #f26522;
+}

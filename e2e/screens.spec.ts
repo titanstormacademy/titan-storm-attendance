@@ -245,7 +245,7 @@ test('report ledger can be filtered by student name and class', async ({ page, i
   await loginAdmin(page)
   await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
   await expect(currentMonthCell(page)).toBeVisible()
-  await expect(page.getByText('1 student', { exact: true })).toBeVisible()
+  await expect(page.locator('.ledger-card').getByText('1 student', { exact: true }).first()).toBeVisible()
   await page.getByLabel('Search ledger students by name').fill('blake')
   await expect(page.getByText('No student matches this search or class filter.')).toBeVisible()
   await page.getByLabel('Search ledger students by name').fill('')
@@ -304,6 +304,22 @@ test('report ledger payment popover stays inside short desktop viewports', async
   expect(saveBox.y + saveBox.height).toBeLessThanOrEqual(655)
 })
 
+test('report ledger summarises paid students per class each month', async ({ page, isMobile }) => {
+  const now = new Date()
+  const classShortLabel = new Intl.DateTimeFormat('en-US', { weekday: 'long' }).format(now).slice(0, 3)
+  const monthLabel = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(now)
+  await loginAdmin(page)
+  await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
+  await expect(page.locator(`.ledger-summary-cell[title^="${classShortLabel}, ${monthLabel}:"]`)).toHaveText(/1\/1$/)
+  await expect(page.locator(`.ledger-summary-cell[title^="${classShortLabel}, ${monthLabel}:"]`)).toHaveAttribute('data-complete', 'true')
+  if (now.getMonth() > 0) {
+    const previousLabel = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' }).format(new Date(now.getFullYear(), now.getMonth() - 1, 1))
+    await expect(page.locator(`.ledger-summary-cell[title^="${classShortLabel}, ${previousLabel}:"]`)).toHaveText(/0\/1$/)
+  }
+  await expect(page.locator('.ledger-summary-cell[title^="All classes"]')).toHaveCount(0)
+  await expectNoHorizontalOverflow(page)
+})
+
 test('report ledger student opens the student details dialog', async ({ page, isMobile }) => {
   await loginAdmin(page)
   await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
@@ -312,6 +328,22 @@ test('report ledger student opens the student details dialog', async ({ page, is
   await expect(page.getByRole('tab', { name: 'Summary' })).toHaveAttribute('aria-selected', 'true')
   await page.getByRole('button', { name: 'Close' }).click()
   await expect(page.getByRole('dialog', { name: 'Avery Basketball Student With A Long Name' })).toHaveCount(0)
+})
+
+test('returning to the browser tab keeps the current screen state', async ({ page, isMobile }) => {
+  await loginAdmin(page)
+  await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
+  const search = page.getByLabel('Search ledger students by name')
+  await search.fill('avery')
+  for (const state of ['hidden', 'visible']) {
+    await page.evaluate((value) => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => value })
+      document.dispatchEvent(new Event('visibilitychange', { bubbles: true }))
+    }, state)
+  }
+  await page.waitForTimeout(1500)
+  await expect(page.getByText('Completing sign-in…')).toHaveCount(0)
+  await expect(search).toHaveValue('avery')
 })
 
 test('refreshing keeps administrators on admin-only pages', async ({ page, isMobile }) => {
