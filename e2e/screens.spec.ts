@@ -269,6 +269,21 @@ test('report ledger month opens payment and note panel', async ({ page, isMobile
   await expectNoHorizontalOverflow(page)
 })
 
+test('report ledger period filter shows rolling month ranges', async ({ page, isMobile }) => {
+  await loginAdmin(page)
+  await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
+  const monthCells = page.getByRole('button', { name: /^Avery Basketball Student With A Long Name, / })
+  await expect(monthCells).toHaveCount(12)
+  for (const [label, count] of [['3 months', 3], ['6 months', 6], ['12 months', 12]] as const) {
+    await page.getByRole('textbox', { name: 'Report period' }).click()
+    await page.getByRole('option', { name: label, exact: true }).click()
+    await expect(page.getByRole('textbox', { name: 'Report year' })).toHaveCount(0)
+    await expect(monthCells).toHaveCount(count)
+    await expect(currentMonthCell(page)).toHaveAccessibleName(/Paid, attended 1 of 1$/)
+  }
+  await expectNoHorizontalOverflow(page)
+})
+
 test('report ledger student opens the student details dialog', async ({ page, isMobile }) => {
   await loginAdmin(page)
   await navigate(page, Boolean(isMobile), 'Reports', 'Reports')

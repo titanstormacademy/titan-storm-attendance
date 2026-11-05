@@ -21,10 +21,13 @@ const statuses: PaymentStatus[] = ['Paid', 'Partial', 'Unpaid']
 const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 const statusLabels: Record<CellStatus, string> = { paid: 'Paid', partial: 'Partial', unpaid: 'Unpaid', outstanding: 'Outstanding', 'not-enrolled': 'Not enrolled', 'not-due': 'Not due' }
 const legend: CellStatus[] = ['paid', 'partial', 'unpaid', 'outstanding', 'not-enrolled']
+type ReportPeriod = '3' | '6' | '12' | 'year'
+const periodOptions = [{ value: '3', label: '3 months' }, { value: '6', label: '6 months' }, { value: '12', label: '12 months' }, { value: 'year', label: 'Full year' }]
 const chipTones = ['amber', 'pink', 'violet', 'blue', 'green', 'orange', 'slate']
 
 export function ReportsPage({ branchId, data, onChanged }: { branchId: number; data: BootstrapData; onChanged: () => Promise<unknown> }) {
   const [year, setYear] = useState(dayjs().format('YYYY'))
+  const [period, setPeriod] = useState<ReportPeriod>('year')
   const [ledger, setLedger] = useState<Ledger | null>(null)
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
@@ -36,42 +39,49 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
   const [detailRequest, setDetailRequest] = useState(0)
   const isMobile = useMediaQuery('(max-width: 62em)')
   const currentMonth = dayjs().format('YYYY-MM')
-  const monthKeys = useMemo(() => Array.from({ length: 12 }, (_, index) => `${year}-${String(index + 1).padStart(2, '0')}`), [year])
+  const monthKeys = useMemo(() => {
+    if (period === 'year') return Array.from({ length: 12 }, (_, index) => `${year}-${String(index + 1).padStart(2, '0')}`)
+    const count = Number(period)
+    return Array.from({ length: count }, (_, index) => dayjs(`${currentMonth}-01`).subtract(count - 1 - index, 'month').format('YYYY-MM'))
+  }, [currentMonth, period, year])
+  const rangeStart = `${monthKeys[0]}-01`
+  const rangeEnd = dayjs(`${monthKeys.at(-1)}-01`).endOf('month').format('YYYY-MM-DD')
+  const spansYears = monthKeys[0].slice(0, 4) !== monthKeys.at(-1)!.slice(0, 4)
+  const periodLabel = period === 'year' ? year : `${dayjs(rangeStart).format('MMM YYYY')} – ${dayjs(rangeEnd).format('MMM YYYY')}`
+  const monthHeader = (month: string) => dayjs(`${month}-01`).format(spansYears ? 'MMM YY' : 'MMM')
   const years = Array.from({ length: 8 }, (_, index) => String(dayjs().year() - index))
 
   useEffect(() => {
     let alive = true
     setLoading(true)
     setLoadError('')
-    getReportLedger(branchId, year)
+    getReportLedger(branchId, rangeStart, rangeEnd)
       .then((next) => { if (alive) setLedger(next) })
       .catch((error) => { if (alive) { setLedger(null); setLoadError(errorMessage(error)) } })
       .finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
-  }, [branchId, reloadRequest, year])
+  }, [branchId, rangeEnd, rangeStart, reloadRequest])
 
   const rows = useMemo(() => {
     if (!ledger) return []
-    const yearStart = `${year}-01-01`
-    const yearEnd = `${year}-12-31`
     const classById = new Map(data.classes.map((item) => [item.id, item]))
     const sessionDates = new Map<number, string[]>()
     ledger.sessions.forEach((session) => sessionDates.set(session.class_id, [...(sessionDates.get(session.class_id) || []), session.session_date]))
     const attendanceByStudent = new Map<number, Ledger['attendance']>()
     ledger.attendance.filter((record) => !record.is_trial).forEach((record) => attendanceByStudent.set(record.student_id, [...(attendanceByStudent.get(record.student_id) || []), record]))
     const remarks = new Map(ledger.remarks.map((item) => [`${item.student_id}:${item.month.slice(0, 7)}`, item.remark]))
-    const yearPayments = data.payments.filter((payment) => payment.fee_month.startsWith(year))
+    const rangePayments = data.payments.filter((payment) => payment.fee_month >= rangeStart && payment.fee_month <= rangeEnd)
 
     return data.students.flatMap((student): LedgerRow[] => {
       const enrollments = data.enrollments.filter((entry) => entry.student_id === student.id)
-      const yearEnrollments = enrollments.filter((entry) => entry.start_date <= yearEnd && (!entry.end_date || entry.end_date >= yearStart))
+      const rangeEnrollments = enrollments.filter((entry) => entry.start_date <= rangeEnd && (!entry.end_date || entry.end_date >= rangeStart))
       const attendance = attendanceByStudent.get(student.id) || []
-      const payments = yearPayments.filter((payment) => payment.student_id === student.id)
-      const include = student.status === 'Active' ? yearEnrollments.length > 0 : student.status === 'Inactive' && (yearEnrollments.length > 0 || attendance.length > 0 || payments.length > 0)
+      const payments = rangePayments.filter((payment) => payment.student_id === student.id)
+      const include = student.status === 'Active' ? rangeEnrollments.length > 0 : student.status === 'Inactive' && (rangeEnrollments.length > 0 || attendance.length > 0 || payments.length > 0)
       if (!include) return []
 
       const covering = (classId: number, date: string) => enrollments.some((entry) => entry.class_id === classId && entry.start_date <= date && (!entry.end_date || entry.end_date >= date))
-      const classes = [...new Map(yearEnrollments.map((entry) => [entry.class_id, classById.get(entry.class_id)])).values()].filter((item): item is AcademyClass => Boolean(item)).sort((a, b) => days.indexOf(a.day_of_week) - days.indexOf(b.day_of_week) || a.label.localeCompare(b.label))
+      const classes = [...new Map(rangeEnrollments.map((entry) => [entry.class_id, classById.get(entry.class_id)])).values()].filter((item): item is AcademyClass => Boolean(item)).sort((a, b) => days.indexOf(a.day_of_week) - days.indexOf(b.day_of_week) || a.label.localeCompare(b.label))
       const classIds = new Set(enrollments.map((entry) => entry.class_id))
       const months = monthKeys.map((month): MonthCell => {
         const scheduled = [...classIds].reduce((sum, classId) => sum + (sessionDates.get(classId) || []).filter((date) => date.startsWith(month) && covering(classId, date)).length, 0)
@@ -90,7 +100,7 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
         months,
       }]
     }).sort((a, b) => a.dayOrder - b.dayOrder || a.classLabel.localeCompare(b.classLabel) || a.student.name.localeCompare(b.student.name))
-  }, [currentMonth, data.classes, data.enrollments, data.payments, data.students, ledger, monthKeys, year])
+  }, [currentMonth, data.classes, data.enrollments, data.payments, data.students, ledger, monthKeys, rangeEnd, rangeStart])
 
   const classOptions = useMemo(() => [...new Set(rows.map((row) => row.classLabel))], [rows])
   const needle = search.trim().toLowerCase()
@@ -113,11 +123,11 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
   }
 
   async function copyReport() {
-    const heading = ['No.', 'Class', 'Student', 'Attendance', ...monthKeys.map((month) => dayjs(`${month}-01`).format('MMM'))]
+    const heading = ['No.', 'Class', 'Student', 'Attendance', ...monthKeys.map(monthHeader)]
     const body = visibleRows.map((row, index) => [index + 1, row.classLabel, row.student.name, `${row.attended}/${row.scheduled}`, ...row.months.map((cell) => [statusLabels[cell.status], attendanceText(cell, currentMonth), cell.remark].filter(Boolean).join(' · '))])
     try {
       await navigator.clipboard.writeText([heading, ...body].map((cells) => cells.map((cell) => String(cell).replace(/\t|\r?\n/g, ' ')).join('\t')).join('\n'))
-      notifications.show({ color: 'green', message: `${year} ledger copied` })
+      notifications.show({ color: 'green', message: `${periodLabel} ledger copied` })
     } catch {
       notifications.show({ color: 'red', message: 'Clipboard access was not available' })
     }
@@ -126,13 +136,13 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
   const panel = activeRow && activeCell ? <MonthPanel key={`${activeRow.student.id}:${activeCell.month}`} branchId={branchId} data={data} row={activeRow} cell={activeCell} currentMonth={currentMonth} portalDropdowns={Boolean(isMobile)} onRemarkSaved={updateRemark} onPaymentSaved={async () => { setActive(null); try { await onChanged() } catch (error) { notifications.show({ color: 'orange', title: 'Payment saved, refresh failed', message: errorMessage(error) }) } }} /> : null
 
   return <>
-    <PageHeader title="Reports" description="Yearly attendance and fee ledger for every student" action={<Group gap="xs"><Select aria-label="Report year" value={year} onChange={(value) => { setYear(value || dayjs().format('YYYY')); setActive(null) }} data={years} allowDeselect={false} w={110} /><Button variant="light" leftSection={<IconClipboard size={17} />} onClick={copyReport} disabled={!visibleRows.length}>Copy</Button></Group>} />
+    <PageHeader title="Reports" description="Attendance and fee ledger for every student" action={<Group gap="xs"><Select aria-label="Report period" value={period} onChange={(value) => { setPeriod((value as ReportPeriod) || 'year'); setActive(null) }} data={periodOptions} allowDeselect={false} w={130} />{period === 'year' && <Select aria-label="Report year" value={year} onChange={(value) => { setYear(value || dayjs().format('YYYY')); setActive(null) }} data={years} allowDeselect={false} w={100} />}<Button variant="light" leftSection={<IconClipboard size={17} />} onClick={copyReport} disabled={!visibleRows.length}>Copy</Button></Group>} />
 
     <Paper radius="lg" withBorder className="ledger-card">
       <Box p="lg" pb="md">
         <Group justify="space-between" align="flex-start" wrap="nowrap">
           <Box><Text fw={800} size="lg">Student ledger</Text><Text c="dimmed" size="sm">Colour shows the month’s payment status; numbers show classes attended / scheduled. Select a month to add a payment or note.</Text></Box>
-          <Badge variant="light" size="lg">{year}</Badge>
+          <Badge variant="light" size="lg">{periodLabel}</Badge>
         </Group>
         <Group mt="md" gap="sm" wrap="wrap">
           <TextInput className="ledger-search" aria-label="Search ledger students by name" leftSection={<IconSearch size={16} />} placeholder="Search student name…" value={search} onChange={(event) => setSearch(event.currentTarget.value)} />
@@ -147,16 +157,16 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
 
       {loadError ? <Box p="lg" pt={0}><Alert color="red" title="Could not load ledger">{loadError}<Button mt="md" size="xs" onClick={() => setReloadRequest((current) => current + 1)}>Retry</Button></Alert></Box>
         : !ledger ? <Stack p="lg" pt={0} gap="xs" role="status" aria-label="Loading ledger">{Array.from({ length: 6 }, (_, index) => <Skeleton key={index} height={44} radius="sm" />)}</Stack>
-          : !visibleRows.length ? <Box p="lg" pt={0}><EmptyState title="No students to show" message={rows.length ? 'No student matches this search or class filter.' : `No enrolled students for ${year}.`} icon={IconUsers} /></Box>
+          : !visibleRows.length ? <Box p="lg" pt={0}><EmptyState title="No students to show" message={rows.length ? 'No student matches this search or class filter.' : `No enrolled students for ${periodLabel}.`} icon={IconUsers} /></Box>
             : isMobile ? <Stack p="md" pt={0} gap="sm">{visibleRows.map((row) => <LedgerCard key={row.student.id} row={row} currentMonth={currentMonth} onOpen={(month) => open(row.student.id, month)} onOpenStudent={() => openStudent(row.student)} />)}</Stack>
               : <Box className="ledger-scroll">
-                <Table className="ledger-table">
+                <Table className="ledger-table" style={{ minWidth: 456 + monthKeys.length * 72 }}>
                   <Table.Thead><Table.Tr>
                     <Table.Th className="ledger-sticky ledger-col-no">No.</Table.Th>
                     <Table.Th className="ledger-sticky ledger-col-class">Class</Table.Th>
                     <Table.Th className="ledger-sticky ledger-col-student">Student</Table.Th>
                     <Table.Th className="ledger-sticky ledger-col-attendance">Attendance</Table.Th>
-                    {monthKeys.map((month) => <Table.Th key={month} className={month === currentMonth ? 'ledger-month is-current' : 'ledger-month'}>{dayjs(`${month}-01`).format('MMM')}</Table.Th>)}
+                    {monthKeys.map((month) => <Table.Th key={month} className={month === currentMonth ? 'ledger-month is-current' : 'ledger-month'}>{monthHeader(month)}</Table.Th>)}
                   </Table.Tr></Table.Thead>
                   <Table.Tbody>{visibleRows.map((row, index) => <Table.Tr key={row.student.id} className={row.student.status === 'Active' ? undefined : 'is-inactive'}>
                     <Table.Td className="ledger-sticky ledger-col-no">{index + 1}</Table.Td>
