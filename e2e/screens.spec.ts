@@ -223,7 +223,7 @@ test('trial attendance is tagged and excluded from counted report sessions', asy
   await markTrial.click()
   await expect(trialToggle).toHaveText('Trial session ✓')
   await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
-  await expect(currentMonthCell(page)).toHaveAccessibleName(/Paid, attended 1 of 1$/)
+  await expect(currentMonthCell(page)).toHaveAccessibleName(/Paid, attended 1 of 4$/)
   await expect(page.getByText('Blake Trial')).toHaveCount(0)
 })
 
@@ -278,7 +278,7 @@ test('report ledger month opens payment and note panel', async ({ page, isMobile
   await loginAdmin(page)
   await navigate(page, Boolean(isMobile), 'Reports', 'Reports')
   await currentMonthCell(page).click()
-  await expect(page.getByText('1 of 1 classes attended')).toBeVisible()
+  await expect(page.getByText('1 of 4 sessions attended')).toBeVisible()
   await expect(page.getByText('UX-001', { exact: false })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Add another payment' })).toBeVisible()
   await page.getByLabel('Month note').fill('Replacement class next week')
@@ -298,7 +298,7 @@ test('report ledger period filter shows rolling month ranges', async ({ page, is
     await page.getByRole('option', { name: label, exact: true }).click()
     await expect(page.getByRole('textbox', { name: 'Report year' })).toHaveCount(0)
     await expect(monthCells).toHaveCount(count)
-    await expect(currentMonthCell(page)).toHaveAccessibleName(/Paid, attended 1 of 1$/)
+    await expect(currentMonthCell(page)).toHaveAccessibleName(/Paid, attended 1 of 4$/)
   }
   await expectNoHorizontalOverflow(page)
 })

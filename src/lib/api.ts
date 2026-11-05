@@ -340,12 +340,11 @@ async function fetchAllRows<T>(query: (from: number, to: number) => PromiseLike<
 }
 
 export async function getReportLedger(branchId: number, start: string, end: string) {
-  const [attendance, sessions, remarks] = await Promise.all([
+  const [attendance, remarks] = await Promise.all([
     fetchAllRows<Pick<Attendance, 'student_id' | 'session_id' | 'class_id' | 'attendance_date' | 'is_trial'>>((from, to) => supabase.from('attendance').select('student_id,session_id,class_id,attendance_date,is_trial').eq('branch_id', branchId).eq('status', 'Present').gte('attendance_date', start).lte('attendance_date', end).order('attendance_date').order('student_id').order('session_id').range(from, to)),
-    fetchAllRows<Pick<Session, 'id' | 'class_id' | 'session_date'>>((from, to) => supabase.from('sessions').select('id,class_id,session_date').eq('branch_id', branchId).gte('session_date', start).lte('session_date', end).order('id').range(from, to)),
     fetchAllRows<StudentMonthRemark>((from, to) => supabase.from('student_month_remarks').select('id,branch_id,student_id,month,remark').eq('branch_id', branchId).gte('month', start).lte('month', end).order('id').range(from, to)),
   ])
-  return { attendance, sessions, remarks }
+  return { attendance, remarks }
 }
 
 export async function saveMonthRemark(branchId: number, studentId: number, month: string, remark: string) {

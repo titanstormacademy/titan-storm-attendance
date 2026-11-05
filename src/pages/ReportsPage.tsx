@@ -22,6 +22,7 @@ const statuses: PaymentStatus[] = ['Paid', 'Partial', 'Unpaid']
 const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 const statusLabels: Record<CellStatus, string> = { paid: 'Paid', partial: 'Partial', unpaid: 'Unpaid', outstanding: 'Outstanding', 'not-enrolled': 'Not enrolled', 'not-due': 'Not due' }
 const legend: CellStatus[] = ['paid', 'partial', 'unpaid', 'outstanding', 'not-enrolled']
+const sessionsPerClass = 4
 type ReportPeriod = '3' | '6' | '12' | 'year'
 const periodOptions = [{ value: '3', label: '3 months' }, { value: '6', label: '6 months' }, { value: '12', label: '12 months' }, { value: 'year', label: 'Full year' }]
 const popoverMiddlewares = {
@@ -72,8 +73,6 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
   const rows = useMemo(() => {
     if (!ledger) return []
     const classById = new Map(data.classes.map((item) => [item.id, item]))
-    const sessionDates = new Map<number, string[]>()
-    ledger.sessions.forEach((session) => sessionDates.set(session.class_id, [...(sessionDates.get(session.class_id) || []), session.session_date]))
     const attendanceByStudent = new Map<number, Ledger['attendance']>()
     ledger.attendance.filter((record) => !record.is_trial).forEach((record) => attendanceByStudent.set(record.student_id, [...(attendanceByStudent.get(record.student_id) || []), record]))
     const remarks = new Map(ledger.remarks.map((item) => [`${item.student_id}:${item.month.slice(0, 7)}`, item.remark]))
@@ -89,9 +88,8 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
 
       const covering = (classId: number, date: string) => enrollments.some((entry) => entry.class_id === classId && entry.start_date <= date && (!entry.end_date || entry.end_date >= date))
       const classes = [...new Map(rangeEnrollments.map((entry) => [entry.class_id, classById.get(entry.class_id)])).values()].filter((item): item is AcademyClass => Boolean(item)).sort((a, b) => days.indexOf(a.day_of_week) - days.indexOf(b.day_of_week) || a.label.localeCompare(b.label))
-      const classIds = new Set(enrollments.map((entry) => entry.class_id))
       const months = monthKeys.map((month): MonthCell => {
-        const scheduled = [...classIds].reduce((sum, classId) => sum + (sessionDates.get(classId) || []).filter((date) => date.startsWith(month) && covering(classId, date)).length, 0)
+        const scheduled = new Set(enrollments.filter((entry) => entry.start_date.slice(0, 7) <= month && (!entry.end_date || entry.end_date.slice(0, 7) >= month)).map((entry) => entry.class_id)).size * sessionsPerClass
         const dates = attendance.filter((record) => record.attendance_date.startsWith(month) && covering(record.class_id, record.attendance_date)).map((record) => record.attendance_date).sort()
         const monthPayments = payments.filter((payment) => payment.fee_month.startsWith(month))
         return { month, status: cellStatus(student, enrollments, monthPayments, month, currentMonth), attended: dates.length, scheduled, dates, payments: monthPayments, remark: remarks.get(`${student.id}:${month}`) || '' }
@@ -165,7 +163,7 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
     <Paper radius="lg" withBorder className="ledger-card">
       <Box p="lg" pb="md">
         <Group justify="space-between" align="flex-start" wrap="nowrap">
-          <Box><Text fw={800} size="lg">Student ledger</Text><Text c="dimmed" size="sm">Colour shows the month’s payment status; numbers show classes attended / scheduled. Select a month to add a payment or note.</Text></Box>
+          <Box><Text fw={800} size="lg">Student ledger</Text><Text c="dimmed" size="sm">Colour shows the month’s payment status; numbers show sessions attended / target (4 per class each month). Select a month to add a payment or note.</Text></Box>
           <Badge variant="light" size="lg">{periodLabel}</Badge>
         </Group>
         <Group mt="md" gap="sm" wrap="wrap">
@@ -275,7 +273,7 @@ function StudentLabel({ row, onOpen }: { row: LedgerRow; onOpen: () => void }) {
 function AttendanceTotal({ row }: { row: LedgerRow }) {
   return <Box className="ledger-attendance-total">
     <Text fw={800} size="sm">{row.attended} / {row.scheduled}</Text>
-    <Text size="xs" c="dimmed">{row.scheduled ? `${Math.round((row.attended / row.scheduled) * 100)}%` : 'No sessions'}</Text>
+    <Text size="xs" c="dimmed">{row.scheduled ? `${Math.round((row.attended / row.scheduled) * 100)}%` : 'No target'}</Text>
   </Box>
 }
 
@@ -355,7 +353,7 @@ function MonthPanel({ branchId, data, row, cell, currentMonth, portalDropdowns, 
 
     <Box>
       <Text size="xs" fw={700} tt="uppercase" c="dimmed">Attendance</Text>
-      <Text size="sm" fw={650} mt={2}>{attendance ? `${cell.attended} of ${cell.scheduled} classes attended` : cell.month > currentMonth ? 'Upcoming month' : 'No classes scheduled'}</Text>
+      <Text size="sm" fw={650} mt={2}>{attendance ? `${cell.attended} of ${cell.scheduled} sessions attended` : cell.month > currentMonth ? 'Upcoming month' : 'Not enrolled this month'}</Text>
       {cell.dates.length > 0 && <Group gap={6} mt={6}>{cell.dates.map((date, index) => <Badge key={`${date}-${index}`} variant="light" color="green" leftSection={<IconCheck size={11} />}>{dayjs(date).format('D MMM')}</Badge>)}</Group>}
     </Box>
 
