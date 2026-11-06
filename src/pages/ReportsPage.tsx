@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type ComponentPropsWithRef, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ComponentPropsWithRef } from 'react'
 import dayjs from 'dayjs'
 import { Alert, Badge, Box, Button, Collapse, Group, NumberInput, Paper, Popover, Select, SimpleGrid, Skeleton, Stack, Table, Text, TextInput, Textarea, UnstyledButton } from '@mantine/core'
 import { useMediaQuery } from '@mantine/hooks'
 import { notifications } from '@mantine/notifications'
-import { IconCheck, IconChevronDown, IconClipboard, IconNote, IconPlus, IconSearch, IconUsers } from '@tabler/icons-react'
+import { IconCheck, IconClipboard, IconNote, IconPlus, IconSearch, IconUsers } from '@tabler/icons-react'
 import { getReportLedger, recordStudentPayment, saveMonthRemark } from '../lib/api'
 import { findDuplicateReference } from '../lib/paymentOperations'
 import { publicImageUrl } from '../lib/supabase'
@@ -44,7 +44,7 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
   const [active, setActive] = useState<{ studentId: number; month: string } | null>(null)
   const [detailStudent, setDetailStudent] = useState<Student | null>(null)
   const [detailRequest, setDetailRequest] = useState(0)
-  const [showClassSummary, setShowClassSummary] = useState(false)
+  const [activeSummaryMonth, setActiveSummaryMonth] = useState<string | null>(null)
   const isMobile = useMediaQuery('(max-width: 62em)')
   const currentMonth = dayjs().format('YYYY-MM')
   const monthKeys = useMemo(() => {
@@ -123,7 +123,7 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
     const groups = [...new Set(scoped.map((row) => row.classLabel))].map((label) => summarize(label, scoped.filter((row) => row.classLabel === label)))
     return { total: groups.length > 1 ? summarize('All classes', scoped) : groups[0], classes: groups.length > 1 ? groups : [] }
   }, [classFilter, monthKeys, rows])
-  const visibleSummaries = summaryRows.total ? [summaryRows.total, ...(showClassSummary ? summaryRows.classes : [])] : []
+  const hasBreakdown = summaryRows.classes.length > 0
   const activeRow = active ? rows.find((row) => row.student.id === active.studentId) : undefined
   const activeCell = activeRow?.months.find((cell) => cell.month === active?.month)
 
@@ -134,6 +134,7 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
   }
 
   function open(studentId: number, month: string) {
+    setActiveSummaryMonth(null)
     setActive((current) => current?.studentId === studentId && current.month === month ? null : { studentId, month })
   }
 
@@ -153,7 +154,12 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
     }
   }
 
-  const summaryToggle = summaryRows.classes.length ? <UnstyledButton className="ledger-summary-toggle" aria-expanded={showClassSummary} onClick={() => setShowClassSummary((current) => !current)}>{showClassSummary ? 'Hide classes' : `By class (${summaryRows.classes.length})`}<IconChevronDown size={13} className={showClassSummary ? 'expanded' : undefined} /></UnstyledButton> : null
+  function openSummary(month: string) {
+    setActive(null)
+    setActiveSummaryMonth((current) => current === month ? null : month)
+  }
+
+  const breakdown = activeSummaryMonth && summaryRows.total ? <SummaryBreakdown month={activeSummaryMonth} currentMonth={currentMonth} total={summaryRows.total} classes={summaryRows.classes} /> : null
 
   const panel = activeRow && activeCell ? <MonthPanel key={`${activeRow.student.id}:${activeCell.month}`} branchId={branchId} data={data} row={activeRow} cell={activeCell} currentMonth={currentMonth} portalDropdowns={Boolean(isMobile)} onRemarkSaved={updateRemark} onPaymentSaved={async () => { setActive(null); try { await onChanged() } catch (error) { notifications.show({ color: 'orange', title: 'Payment saved, refresh failed', message: errorMessage(error) }) } }} /> : null
 
@@ -163,7 +169,7 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
     <Paper radius="lg" withBorder className="ledger-card">
       <Box p="lg" pb="md">
         <Group justify="space-between" align="flex-start" wrap="nowrap">
-          <Box><Text fw={800} size="lg">Student ledger</Text><Text c="dimmed" size="sm">Colour shows the month’s payment status; numbers show sessions attended / target (4 per class each month). Select a month to add a payment or note.</Text></Box>
+          <Box><Text fw={800} size="lg">Student ledger</Text><Text c="dimmed" size="sm">Colour shows the month’s payment status; numbers show sessions attended / target (4 per class each month). Select a month to add a payment or note, or a Paid students month for the class breakdown.</Text></Box>
           <Badge variant="light" size="lg">{periodLabel}</Badge>
         </Group>
         <Group mt="md" gap="sm" wrap="wrap">
@@ -180,7 +186,7 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
       {loadError ? <Box p="lg" pt={0}><Alert color="red" title="Could not load ledger">{loadError}<Button mt="md" size="xs" onClick={() => setReloadRequest((current) => current + 1)}>Retry</Button></Alert></Box>
         : !ledger ? <Stack p="lg" pt={0} gap="xs" role="status" aria-label="Loading ledger">{Array.from({ length: 6 }, (_, index) => <Skeleton key={index} height={44} radius="sm" />)}</Stack>
           : !visibleRows.length ? <Box p="lg" pt={0}><EmptyState title="No students to show" message={rows.length ? 'No student matches this search or class filter.' : `No enrolled students for ${periodLabel}.`} icon={IconUsers} /></Box>
-            : isMobile ? <Stack p="md" pt={0} gap="sm"><LedgerSummaryCard summaries={visibleSummaries} currentMonth={currentMonth} toggle={summaryToggle} />{visibleRows.map((row) => <LedgerCard key={row.student.id} row={row} currentMonth={currentMonth} onOpen={(month) => open(row.student.id, month)} onOpenStudent={() => openStudent(row.student)} />)}</Stack>
+            : isMobile ? <Stack p="md" pt={0} gap="sm">{summaryRows.total && <LedgerSummaryCard summary={summaryRows.total} currentMonth={currentMonth} onOpen={hasBreakdown ? openSummary : undefined} />}{visibleRows.map((row) => <LedgerCard key={row.student.id} row={row} currentMonth={currentMonth} onOpen={(month) => open(row.student.id, month)} onOpenStudent={() => openStudent(row.student)} />)}</Stack>
               : <Box className="ledger-scroll">
                 <Table className="ledger-table" style={{ minWidth: 456 + monthKeys.length * 72 }}>
                   <Table.Thead><Table.Tr>
@@ -190,13 +196,21 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
                     <Table.Th className="ledger-sticky ledger-col-attendance">Attendance</Table.Th>
                     {monthKeys.map((month) => <Table.Th key={month} className={month === currentMonth ? 'ledger-month is-current' : 'ledger-month'}>{monthHeader(month)}</Table.Th>)}
                   </Table.Tr></Table.Thead>
-                  <Table.Tbody>{visibleSummaries.map((item, index) => <Table.Tr key={`summary-${item.label}`} className={`ledger-summary-row${index === 0 ? ' is-total' : ''}${index === visibleSummaries.length - 1 ? ' is-last' : ''}`}>
+                  <Table.Tbody>{summaryRows.total && <Table.Tr className="ledger-summary-row is-total is-last">
                     <Table.Td className="ledger-sticky ledger-col-no" />
-                    <Table.Td className="ledger-sticky ledger-col-class">{index === 0 ? <Text size="xs" fw={800}>{item.label === 'All classes' ? 'All' : item.label}</Text> : <ClassChip label={item.label} />}</Table.Td>
-                    <Table.Td className="ledger-sticky ledger-col-student">{index === 0 ? <Group gap={8} wrap="nowrap"><Text size="xs" fw={800}>Paid students</Text>{summaryToggle}</Group> : null}</Table.Td>
-                    <Table.Td className="ledger-sticky ledger-col-attendance"><Text size="xs" c="dimmed">{item.students} student{item.students === 1 ? '' : 's'}</Text></Table.Td>
-                    {item.months.map((cell) => <Table.Td key={cell.month} className={cell.month === currentMonth ? 'ledger-month-cell is-current' : 'ledger-month-cell'}><SummaryCell label={item.label} cell={cell} /></Table.Td>)}
-                  </Table.Tr>)}{visibleRows.map((row, index) => <Table.Tr key={row.student.id} className={row.student.status === 'Active' ? undefined : 'is-inactive'}>
+                    <Table.Td className="ledger-sticky ledger-col-class"><Text size="xs" fw={800}>{summaryRows.total.label === 'All classes' ? 'All' : summaryRows.total.label}</Text></Table.Td>
+                    <Table.Td className="ledger-sticky ledger-col-student"><Text size="xs" fw={800}>Paid students</Text></Table.Td>
+                    <Table.Td className="ledger-sticky ledger-col-attendance"><Text size="xs" c="dimmed">{summaryRows.total.students} student{summaryRows.total.students === 1 ? '' : 's'}</Text></Table.Td>
+                    {summaryRows.total.months.map((cell) => {
+                      const opened = activeSummaryMonth === cell.month
+                      return <Table.Td key={cell.month} className={cell.month === currentMonth ? 'ledger-month-cell is-current' : 'ledger-month-cell'}>
+                        {hasBreakdown && cell.total ? <Popover opened={opened} onChange={(next) => { if (!next) setActiveSummaryMonth(null) }} width={320} position="bottom" withArrow shadow="lg" middlewares={popoverMiddlewares}>
+                          <Popover.Target><SummaryCell label={summaryRows.total!.label} cell={cell} opened={opened} onClick={() => openSummary(cell.month)} /></Popover.Target>
+                          <Popover.Dropdown className="ledger-popover">{opened && breakdown}</Popover.Dropdown>
+                        </Popover> : <SummaryCell label={summaryRows.total!.label} cell={cell} />}
+                      </Table.Td>
+                    })}
+                  </Table.Tr>}{visibleRows.map((row, index) => <Table.Tr key={row.student.id} className={row.student.status === 'Active' ? undefined : 'is-inactive'}>
                     <Table.Td className="ledger-sticky ledger-col-no">{index + 1}</Table.Td>
                     <Table.Td className="ledger-sticky ledger-col-class"><ClassChip label={row.classLabel} /></Table.Td>
                     <Table.Td className="ledger-sticky ledger-col-student"><StudentLabel row={row} onOpen={() => openStudent(row.student)} /></Table.Td>
@@ -216,6 +230,7 @@ export function ReportsPage({ branchId, data, onChanged }: { branchId: number; d
     </Paper>
 
     {isMobile && <ResponsiveModal opened={Boolean(panel)} onClose={() => setActive(null)} title="Month details">{panel}</ResponsiveModal>}
+    {isMobile && <ResponsiveModal opened={Boolean(breakdown)} onClose={() => setActiveSummaryMonth(null)} title="Paid students">{breakdown}</ResponsiveModal>}
     <StudentsPage branchId={branchId} data={data} isAdmin dialogOnly dialogStudent={detailStudent} dialogRequest={detailRequest} onDialogClose={() => setDetailStudent(null)} onChanged={onChanged} />
   </>
 }
@@ -240,22 +255,46 @@ function LedgerCard({ row, currentMonth, onOpen, onOpenStudent }: { row: LedgerR
   </Paper>
 }
 
-function SummaryCell({ label, cell, compact }: { label: string; cell: ClassSummary['months'][number]; compact?: boolean }) {
-  return <span className={compact ? 'ledger-summary-cell ledger-summary-cell-compact' : 'ledger-summary-cell'} data-complete={cell.total > 0 && cell.paid === cell.total} data-empty={cell.total === 0} title={`${label}, ${dayjs(`${cell.month}-01`).format('MMMM YYYY')}: ${cell.paid} of ${cell.total} students paid`}>
+function SummaryCell({ label, cell, compact, opened, onClick, ...rest }: { label: string; cell: ClassSummary['months'][number]; compact?: boolean; opened?: boolean; onClick?: () => void } & Omit<ComponentPropsWithRef<'button'>, 'onClick'>) {
+  const title = `${label}, ${dayjs(`${cell.month}-01`).format('MMMM YYYY')}: ${cell.paid} of ${cell.total} students paid`
+  const className = `ledger-summary-cell${compact ? ' ledger-summary-cell-compact' : ''}`
+  const content = <>
     {compact && <span className="ledger-cell-month">{dayjs(`${cell.month}-01`).format('MMM')}</span>}
     <span>{cell.total ? `${cell.paid}/${cell.total}` : '—'}</span>
-  </span>
+  </>
+  if (!onClick || !cell.total) return <span className={className} data-complete={cell.total > 0 && cell.paid === cell.total} data-empty={cell.total === 0} title={title}>{content}</span>
+  return <button {...rest} type="button" className={className} data-complete={cell.paid === cell.total} aria-expanded={opened} aria-label={`${title}. Show class breakdown`} title={title} onClick={onClick} onKeyDown={(event) => { if (event.key === 'Escape' && opened) { event.preventDefault(); onClick() } }}>{content}</button>
 }
 
-function LedgerSummaryCard({ summaries, currentMonth, toggle }: { summaries: ClassSummary[]; currentMonth: string; toggle: ReactNode }) {
-  if (!summaries.length) return null
+function LedgerSummaryCard({ summary, currentMonth, onOpen }: { summary: ClassSummary; currentMonth: string; onOpen?: (month: string) => void }) {
   return <Paper p="sm" radius="md" withBorder className="ledger-summary-card">
-    <Group justify="space-between" wrap="nowrap"><Text fw={800} size="xs">Paid students</Text>{toggle}</Group>
-    <Stack gap="xs" mt={6}>{summaries.map((item, index) => <Box key={item.label}>
-      <Group gap="xs" wrap="nowrap">{index === 0 ? <Text size="xs" fw={700}>{item.label}</Text> : <ClassChip label={item.label} />}<Text size="xs" c="dimmed">{item.students} student{item.students === 1 ? '' : 's'}</Text></Group>
-      <SimpleGrid cols={6} spacing={6} mt={6}>{item.months.map((cell) => <Box key={cell.month} className={cell.month === currentMonth ? 'is-current' : undefined}><SummaryCell label={item.label} cell={cell} compact /></Box>)}</SimpleGrid>
-    </Box>)}</Stack>
+    <Group gap="xs" wrap="nowrap"><Text fw={800} size="xs">Paid students</Text><Text size="xs" c="dimmed">{summary.students} student{summary.students === 1 ? '' : 's'}{onOpen ? ' · tap a month for classes' : ''}</Text></Group>
+    <SimpleGrid cols={6} spacing={6} mt={6}>{summary.months.map((cell) => <Box key={cell.month} className={cell.month === currentMonth ? 'is-current' : undefined}><SummaryCell label={summary.label} cell={cell} compact onClick={onOpen ? () => onOpen(cell.month) : undefined} /></Box>)}</SimpleGrid>
   </Paper>
+}
+
+function SummaryBreakdown({ month, currentMonth, total, classes }: { month: string; currentMonth: string; total: ClassSummary; classes: ClassSummary[] }) {
+  const index = total.months.findIndex((cell) => cell.month === month)
+  const overall = total.months[index]
+  const future = month > currentMonth
+  const rows = classes.map((item) => ({ label: item.label, ...item.months[index] })).filter((item) => item.total > 0)
+  const percent = (paid: number, count: number) => count ? Math.round((paid / count) * 100) : 0
+  return <Stack gap="md" className="ledger-breakdown">
+    <Group justify="space-between" align="flex-start" wrap="nowrap">
+      <Box><Text fw={800}>{dayjs(`${month}-01`).format('MMMM YYYY')}</Text><Text size="xs" c="dimmed">{future ? 'Paid in advance by class' : 'Paid students by class'}</Text></Box>
+      <Box ta="right"><Text fw={800} className="ledger-breakdown-total">{overall.paid}/{overall.total}</Text><Text size="xs" c="dimmed">{percent(overall.paid, overall.total)}% paid</Text></Box>
+    </Group>
+    <Stack gap="sm">{rows.map((item) => {
+      const complete = item.paid === item.total
+      return <Box key={item.label} className="ledger-breakdown-row">
+        <Group justify="space-between" wrap="nowrap" gap="xs">
+          <ClassChip label={item.label} />
+          <Text size="xs" fw={700} className="ledger-breakdown-count" data-complete={complete}>{item.paid}/{item.total} · {complete ? 'all paid' : future ? `${item.paid} paid ahead` : `${item.total - item.paid} unpaid`}</Text>
+        </Group>
+        <div className="ledger-breakdown-bar" aria-hidden="true"><span data-complete={complete} style={{ transform: `scaleX(${item.total ? item.paid / item.total : 0})` }} /></div>
+      </Box>
+    })}</Stack>
+  </Stack>
 }
 
 function StudentLabel({ row, onOpen }: { row: LedgerRow; onOpen: () => void }) {
